@@ -1,0 +1,398 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		34CEB1963BE2906C04DC90F1 /* HermesKit in Frameworks */ = {isa = PBXBuildFile; productRef = 54F7125F1F9B1F1467710CF7 /* HermesKit */; };
+		4197CC31955A6B74590E1B8D /* MenuBarScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A06CAEED26A62963B6A158E /* MenuBarScene.swift */; };
+		4D6B08D31A18B2CFF00C3764 /* AppCore in Frameworks */ = {isa = PBXBuildFile; productRef = 967E2C8426320A1C863DA69B /* AppCore */; };
+		57621F1EF637DB416AB303B0 /* WindowRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF40379452BC8EF267354214 /* WindowRouter.swift */; };
+		78DD9542BD112CA0966EA259 /* AgentHubApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBAFC97FA436EC36318AA659 /* AgentHubApp.swift */; };
+		79FC1A5A763542166B4BAF35 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F84A7A79B5885CCCA84BD68D /* AppDelegate.swift */; };
+		882D9B5A2EF024E9B250986D /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F7E99207243E3A749B3FAE2 /* DashboardView.swift */; };
+		C69B2371BE066FEC6693B19D /* AppStateStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349F24772CDA76DA95E19FAA /* AppStateStore.swift */; };
+		DB5F3B37597E593C5F6960DB /* SettingsScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED8841879214E4228BD5AD46 /* SettingsScene.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0A06CAEED26A62963B6A158E /* MenuBarScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarScene.swift; sourceTree = "<group>"; };
+		31E5161E6B75DB81EA099CE9 /* AppCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AppCore; path = Packages/AppCore; sourceTree = SOURCE_ROOT; };
+		349F24772CDA76DA95E19FAA /* AppStateStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStateStore.swift; sourceTree = "<group>"; };
+		42A12123764CA7B1478DCA69 /* HermesKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = HermesKit; path = Packages/HermesKit; sourceTree = SOURCE_ROOT; };
+		4F7E99207243E3A749B3FAE2 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
+		622B5A902473033585A31CDA /* AgentHubApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AgentHubApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		EBAFC97FA436EC36318AA659 /* AgentHubApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentHubApp.swift; sourceTree = "<group>"; };
+		ED8841879214E4228BD5AD46 /* SettingsScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsScene.swift; sourceTree = "<group>"; };
+		F02B675CF2E288709BEB3051 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		F84A7A79B5885CCCA84BD68D /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		FF40379452BC8EF267354214 /* WindowRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowRouter.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		01B7C5E3594E999BFB19A93E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4D6B08D31A18B2CFF00C3764 /* AppCore in Frameworks */,
+				34CEB1963BE2906C04DC90F1 /* HermesKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0C66ECEBE7104EE795459C01 /* Dashboard */ = {
+			isa = PBXGroup;
+			children = (
+				4F7E99207243E3A749B3FAE2 /* DashboardView.swift */,
+			);
+			path = Dashboard;
+			sourceTree = "<group>";
+		};
+		10C0E942FD9F21AE738C91AF /* AppShell */ = {
+			isa = PBXGroup;
+			children = (
+				F84A7A79B5885CCCA84BD68D /* AppDelegate.swift */,
+				349F24772CDA76DA95E19FAA /* AppStateStore.swift */,
+				0A06CAEED26A62963B6A158E /* MenuBarScene.swift */,
+				ED8841879214E4228BD5AD46 /* SettingsScene.swift */,
+				FF40379452BC8EF267354214 /* WindowRouter.swift */,
+			);
+			path = AppShell;
+			sourceTree = "<group>";
+		};
+		35363EB9BDE1D8C4F2EE55CE /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				0C66ECEBE7104EE795459C01 /* Dashboard */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		491A7183CA87403A4212B502 = {
+			isa = PBXGroup;
+			children = (
+				B7A0D5CF5C05A3E83F5C5C2B /* AgentHubApp */,
+				FA920A824792F9758809E8E3 /* Packages */,
+				9ADD751D6895AA6CA0B84C2C /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		9ADD751D6895AA6CA0B84C2C /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				622B5A902473033585A31CDA /* AgentHubApp.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A33E54E64C85EE45B3C350A5 /* SupportingFiles */ = {
+			isa = PBXGroup;
+			children = (
+				F02B675CF2E288709BEB3051 /* Info.plist */,
+			);
+			path = SupportingFiles;
+			sourceTree = "<group>";
+		};
+		B7A0D5CF5C05A3E83F5C5C2B /* AgentHubApp */ = {
+			isa = PBXGroup;
+			children = (
+				10C0E942FD9F21AE738C91AF /* AppShell */,
+				35363EB9BDE1D8C4F2EE55CE /* Features */,
+				A33E54E64C85EE45B3C350A5 /* SupportingFiles */,
+				EBAFC97FA436EC36318AA659 /* AgentHubApp.swift */,
+			);
+			name = AgentHubApp;
+			path = apps/mac/AgentHubApp;
+			sourceTree = "<group>";
+		};
+		FA920A824792F9758809E8E3 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				31E5161E6B75DB81EA099CE9 /* AppCore */,
+				42A12123764CA7B1478DCA69 /* HermesKit */,
+			);
+			path = Packages;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		92C70422761BBD9671A4EDFA /* AgentHubApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 338FC9E7A46D2B20F9FA8A89 /* Build configuration list for PBXNativeTarget "AgentHubApp" */;
+			buildPhases = (
+				814AA057009532FA70703EBF /* Sources */,
+				01B7C5E3594E999BFB19A93E /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = AgentHubApp;
+			packageProductDependencies = (
+				967E2C8426320A1C863DA69B /* AppCore */,
+				54F7125F1F9B1F1467710CF7 /* HermesKit */,
+			);
+			productName = AgentHubApp;
+			productReference = 622B5A902473033585A31CDA /* AgentHubApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		BAD2446E410414CA793D4624 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = 64D95FE50C3B8D5A0A8E4714 /* Build configuration list for PBXProject "AgentHub" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 491A7183CA87403A4212B502;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				2F84F39861A81A7A9CA3B094 /* XCLocalSwiftPackageReference "Packages/AppCore" */,
+				4E53016734538F38DDD1D5A4 /* XCLocalSwiftPackageReference "Packages/HermesKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 9ADD751D6895AA6CA0B84C2C /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				92C70422761BBD9671A4EDFA /* AgentHubApp */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		814AA057009532FA70703EBF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				78DD9542BD112CA0966EA259 /* AgentHubApp.swift in Sources */,
+				79FC1A5A763542166B4BAF35 /* AppDelegate.swift in Sources */,
+				C69B2371BE066FEC6693B19D /* AppStateStore.swift in Sources */,
+				882D9B5A2EF024E9B250986D /* DashboardView.swift in Sources */,
+				4197CC31955A6B74590E1B8D /* MenuBarScene.swift in Sources */,
+				DB5F3B37597E593C5F6960DB /* SettingsScene.swift in Sources */,
+				57621F1EF637DB416AB303B0 /* WindowRouter.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		5598D8579503A190BA4E6FE5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		9397B3023660432CF9B1B693 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		C6CDED4DFAAA7805E04C83AF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = apps/mac/AgentHubApp/SupportingFiles/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "io.nous.agent-hub";
+				PRODUCT_NAME = "Agent Hub";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+			};
+			name = Debug;
+		};
+		FAA9C757C600E0CF1935D003 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = apps/mac/AgentHubApp/SupportingFiles/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "io.nous.agent-hub";
+				PRODUCT_NAME = "Agent Hub";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		338FC9E7A46D2B20F9FA8A89 /* Build configuration list for PBXNativeTarget "AgentHubApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C6CDED4DFAAA7805E04C83AF /* Debug */,
+				FAA9C757C600E0CF1935D003 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		64D95FE50C3B8D5A0A8E4714 /* Build configuration list for PBXProject "AgentHub" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5598D8579503A190BA4E6FE5 /* Debug */,
+				9397B3023660432CF9B1B693 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		2F84F39861A81A7A9CA3B094 /* XCLocalSwiftPackageReference "Packages/AppCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/AppCore;
+		};
+		4E53016734538F38DDD1D5A4 /* XCLocalSwiftPackageReference "Packages/HermesKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/HermesKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		54F7125F1F9B1F1467710CF7 /* HermesKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = HermesKit;
+		};
+		967E2C8426320A1C863DA69B /* AppCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AppCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = BAD2446E410414CA793D4624 /* Project object */;
+}

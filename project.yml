@@ -1,0 +1,47 @@
+name: AgentHub
+options:
+  minimumXcodeGenVersion: 2.45.0
+  groupSortPosition: top
+settings:
+  base:
+    SWIFT_VERSION: 6.0
+packages:
+  AppCore:
+    path: Packages/AppCore
+  HermesKit:
+    path: Packages/HermesKit
+
+targets:
+  AgentHubApp:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: apps/mac/AgentHubApp
+    info:
+      path: apps/mac/AgentHubApp/SupportingFiles/Info.plist
+      properties:
+        CFBundleDisplayName: Agent Hub
+        CFBundleIdentifier: io.nous.agent-hub
+        CFBundleShortVersionString: 0.1.0
+        CFBundleVersion: 1
+        LSApplicationCategoryType: public.app-category.developer-tools
+        LSUIElement: true
+        NSHumanReadableCopyright: Copyright © 2026 Nous Research
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.nous.agent-hub
+        PRODUCT_NAME: Agent Hub
+        GENERATE_INFOPLIST_FILE: NO
+        SWIFT_EMIT_LOC_STRINGS: NO
+    dependencies:
+      - package: AppCore
+        product: AppCore
+      - package: HermesKit
+        product: HermesKit
+
+schemes:
+  AgentHubApp:
+    build:
+      targets:
+        AgentHubApp: all
