@@ -12,8 +12,16 @@ let package = Package(
             targets: ["AppCore"]
         )
     ],
+    dependencies: [
+        .package(path: "../HermesKit")
+    ],
     targets: [
-        .target(name: "AppCore"),
+        .target(
+            name: "AppCore",
+            dependencies: [
+                .product(name: "HermesKit", package: "HermesKit")
+            ]
+        ),
         .testTarget(
             name: "AppCoreTests",
             dependencies: ["AppCore"]

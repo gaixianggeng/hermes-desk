@@ -19,6 +19,7 @@ final class TaskModelTests: XCTestCase {
 
     func testTaskStateTerminalFlagMatchesProtocolExpectations() {
         XCTAssertTrue(TaskState.succeeded.isTerminal)
+        XCTAssertTrue(TaskState.failed.isTerminal)
         XCTAssertTrue(TaskState.cancelled.isTerminal)
         XCTAssertFalse(TaskState.running.isTerminal)
         XCTAssertFalse(TaskState.waitingUser.isTerminal)
@@ -38,7 +39,19 @@ final class TaskModelTests: XCTestCase {
         XCTAssertEqual(sortedIDs, ["queued", "paused", "succeeded", "cancelled"])
     }
 
-    private func makeTask(id: String, state: TaskState, updatedAt: Date) -> Task {
+    func testSortedForOverviewPrioritizesLiveTasksAheadOfPreviewSamplesWithinSameState() {
+        let now = Date()
+        let tasks = [
+            makeTask(id: "preview-running", state: .running, updatedAt: now, isPreview: true),
+            makeTask(id: "live-running", state: .running, updatedAt: now.addingTimeInterval(-60), isPreview: false)
+        ]
+
+        let sortedIDs = tasks.sortedForOverview().map(\.taskID)
+
+        XCTAssertEqual(sortedIDs, ["live-running", "preview-running"])
+    }
+
+    private func makeTask(id: String, state: TaskState, updatedAt: Date, isPreview: Bool = false) -> Task {
         Task(
             taskID: id,
             title: id,
@@ -49,7 +62,8 @@ final class TaskModelTests: XCTestCase {
                 state: state,
                 phaseLabel: "phase",
                 lastEventAt: updatedAt
-            )
+            ),
+            isPreview: isPreview
         )
     }
 }

@@ -8,8 +8,8 @@ struct SettingsScene: View {
         Form {
             Section("Adapter") {
                 LabeledContent("Current adapter", value: "Hermes")
-                LabeledContent("Reachability", value: "Local /health probe")
-                LabeledContent("Task list", value: "Preview samples")
+                LabeledContent("Reachability", value: "Local /health + /v1/runs")
+                LabeledContent("Task list", value: "Live Hermes runs + preview samples")
             }
 
             Section("Connection") {
@@ -27,7 +27,7 @@ struct SettingsScene: View {
             }
 
             Section("Support") {
-                Text("Agent Hub can verify the local Hermes endpoint today. Task lists in the menu bar and dashboard are preview samples until Hermes exposes task snapshots.")
+                Text("Agent Hub now starts live Hermes runs from the dashboard and streams their events into task detail. Preview tasks remain available as sample shells around the live task feed.")
                     .foregroundStyle(.secondary)
             }
         }

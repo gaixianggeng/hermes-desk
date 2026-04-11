@@ -5,6 +5,11 @@ import SwiftUI
 struct DashboardView: View {
     @EnvironmentObject private var appState: AppStateStore
 
+    @State private var isPresentingRunSheet = false
+    @State private var runTitleDraft = ""
+    @State private var runPromptDraft = ""
+    @State private var runSheetError: String?
+
     private let detailColumns = [GridItem(.adaptive(minimum: 120), spacing: 8)]
     private let statColumns = [
         GridItem(.flexible(), spacing: 12),
@@ -25,6 +30,12 @@ struct DashboardView: View {
             .toolbar {
                 ToolbarItemGroup {
                     Button {
+                        presentRunSheet()
+                    } label: {
+                        Label("Run Hermes Task", systemImage: "sparkles.rectangle.stack")
+                    }
+
+                    Button {
                         Swift.Task {
                             await appState.refreshHealth()
                         }
@@ -39,6 +50,9 @@ struct DashboardView: View {
                 }
             }
         }
+        .sheet(isPresented: $isPresentingRunSheet) {
+            runTaskSheet
+        }
         .task {
             await appState.refreshHealth()
         }
@@ -48,6 +62,7 @@ struct DashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 heroCard
+
                 taskPanel(
                     title: "Action Required",
                     subtitle: "Approvals, failures, and other items that need a person before work can continue.",
@@ -60,21 +75,21 @@ struct DashboardView: View {
                     subtitle: "Tasks Hermes is actively working on right now.",
                     tasks: appState.runningTasks,
                     emptyTitle: "No active task",
-                    emptyMessage: "Current task activity will appear here when Hermes exposes task feeds."
+                    emptyMessage: "Start a Hermes task to see live output here."
                 )
                 taskPanel(
                     title: "Queued & Paused",
                     subtitle: "Tasks that are lined up to start later or are waiting to be resumed.",
                     tasks: appState.queuedTasks,
                     emptyTitle: "No queued work",
-                    emptyMessage: "There are no queued or paused tasks in the sample feed."
+                    emptyMessage: "There are no queued or paused tasks right now."
                 )
                 taskPanel(
                     title: "Recent Results",
                     subtitle: "Completed work that still has useful outputs or files to revisit.",
                     tasks: appState.recentTasks,
                     emptyTitle: "No recent result",
-                    emptyMessage: "Completed runs will appear here once Hermes publishes result snapshots."
+                    emptyMessage: "Completed Hermes runs will land here with their latest result summary."
                 )
 
                 if appState.cancelledTasks.isEmpty == false {
@@ -93,10 +108,24 @@ struct DashboardView: View {
 
     private var heroCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(appState.connectionState.title)
-                .font(.title2.weight(.semibold))
-            Text(appState.connectionState.detail)
-                .foregroundStyle(.secondary)
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(appState.connectionState.title)
+                        .font(.title2.weight(.semibold))
+                    Text(appState.connectionState.detail)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 12)
+
+                Button {
+                    presentRunSheet()
+                } label: {
+                    Label("Run Hermes Task", systemImage: "plus.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(appState.isStartingRun)
+            }
 
             Label(appState.taskFeedSummary, systemImage: "info.circle")
                 .font(.subheadline)
@@ -168,15 +197,24 @@ struct DashboardView: View {
 
                     Spacer(minLength: 0)
 
-                    Text(task.runState.phaseLabel)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(task.state.tint)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(task.state.tint.opacity(0.12), in: Capsule())
+                    VStack(alignment: .trailing, spacing: 8) {
+                        Text(task.runState.phaseLabel)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(task.state.tint)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(task.state.tint.opacity(0.12), in: Capsule())
+
+                        sourceBadge(task)
+                    }
                 }
 
-                if let artifact = task.artifact {
+                if let output = task.latestOutputSummary, output.isEmpty == false {
+                    Text(output)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                } else if let artifact = task.artifact {
                     Text(artifact.summary)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -219,6 +257,52 @@ struct DashboardView: View {
 
                             if let failureMessage = task.runState.failureMessage {
                                 statusLine(label: "Issue", value: failureMessage)
+                            }
+                        }
+                    }
+
+                    detailCard(title: "Latest output", systemImage: "text.alignleft") {
+                        if let output = task.latestOutputSummary {
+                            Text(output)
+                                .font(.callout.monospaced())
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            Text(task.isPreview ? "Preview tasks do not stream live Hermes output." : "Hermes has not emitted output for this task yet.")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    detailCard(title: "Recent events", systemImage: "timeline.selection") {
+                        if task.taskEvents.isEmpty {
+                            Text(task.isPreview ? "Preview tasks do not carry a live Hermes event timeline." : "Waiting for Hermes events…")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            VStack(alignment: .leading, spacing: 12) {
+                                ForEach(Array(task.taskEvents.suffix(8).reversed())) { event in
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        HStack(alignment: .firstTextBaseline) {
+                                            Text(event.summary)
+                                                .font(.subheadline.weight(.semibold))
+                                            Spacer(minLength: 8)
+                                            Text(event.timestamp.formatted(date: .omitted, time: .shortened))
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+
+                                        if let detail = event.detail, detail.isEmpty == false {
+                                            Text(detail)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .textSelection(.enabled)
+                                        }
+                                    }
+                                    .padding(.bottom, 6)
+
+                                    if event.id != task.taskEvents.suffix(8).first?.id {
+                                        Divider()
+                                    }
+                                }
                             }
                         }
                     }
@@ -271,6 +355,7 @@ struct DashboardView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             statusLine(label: "Task ID", value: task.taskID)
                             statusLine(label: "Agent", value: task.agentID)
+                            statusLine(label: "Feed", value: task.isPreview ? "Preview sample" : "Live Hermes run")
                             statusLine(label: "Source", value: task.source.displayTitle)
                             statusLine(label: "Created", value: task.createdAt.formatted(date: .abbreviated, time: .shortened))
 
@@ -290,7 +375,7 @@ struct DashboardView: View {
             ContentUnavailableView(
                 "Choose a task",
                 systemImage: "list.bullet.rectangle.portrait",
-                description: Text("Pick a task from the menu bar or from the overview to inspect its latest context.")
+                description: Text("Pick a task from the overview to inspect its latest context, output, and event timeline.")
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(24)
@@ -300,11 +385,12 @@ struct DashboardView: View {
     private func detailHeader(_ task: Task) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 8) {
                     Text(task.title)
                         .font(.title2.weight(.semibold))
                     Text(task.currentSummary)
                         .foregroundStyle(.secondary)
+                    sourceBadge(task)
                 }
 
                 Spacer(minLength: 0)
@@ -368,6 +454,93 @@ struct DashboardView: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func sourceBadge(_ task: Task) -> some View {
+        Text(task.isPreview ? "Preview" : "Live")
+            .font(.caption.weight(.medium))
+            .foregroundStyle(task.isPreview ? Color.secondary : Color.green)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background((task.isPreview ? Color.secondary : Color.green).opacity(0.14), in: Capsule())
+    }
+
+    private var runTaskSheet: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Run Hermes Task")
+                .font(.title2.weight(.semibold))
+            Text("Start a real Hermes run without turning Agent Hub into a chat shell. Give the task a short label if you want, then write the work request below.")
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Task title (optional)")
+                    .font(.subheadline.weight(.medium))
+                TextField("e.g. Review the latest failing build", text: $runTitleDraft)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Hermes task")
+                    .font(.subheadline.weight(.medium))
+                TextEditor(text: $runPromptDraft)
+                    .font(.body)
+                    .frame(minHeight: 180)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                    )
+            }
+
+            if let runSheetError {
+                Label(runSheetError, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    isPresentingRunSheet = false
+                }
+                Button {
+                    submitRunSheet()
+                } label: {
+                    if appState.isStartingRun {
+                        Label("Starting…", systemImage: "hourglass")
+                    } else {
+                        Label("Start Run", systemImage: "play.fill")
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .disabled(appState.isStartingRun || runPromptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 540, minHeight: 380)
+    }
+
+    private func presentRunSheet() {
+        runSheetError = nil
+        appState.runLaunchError = nil
+        isPresentingRunSheet = true
+    }
+
+    private func submitRunSheet() {
+        runSheetError = nil
+        Swift.Task {
+            do {
+                try await appState.startHermesTask(title: runTitleDraft, prompt: runPromptDraft)
+                await MainActor.run {
+                    runTitleDraft = ""
+                    runPromptDraft = ""
+                    isPresentingRunSheet = false
+                }
+            } catch {
+                await MainActor.run {
+                    runSheetError = error.localizedDescription
+                }
+            }
+        }
     }
 }
 

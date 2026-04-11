@@ -18,7 +18,7 @@ public enum TaskState: String, Codable, Sendable, CaseIterable {
 
     public var isTerminal: Bool {
         switch self {
-        case .succeeded, .cancelled:
+        case .succeeded, .failed, .cancelled:
             return true
         default:
             return false
@@ -87,10 +87,13 @@ public struct Task: Codable, Equatable, Sendable, Identifiable {
     public var createdAt: Date
     public var updatedAt: Date
     public var currentSummary: String
+    public var output: String
+    public var taskEvents: [TaskEvent]
     public var availableActions: [TaskAction]
     public var capabilities: AgentCapability
     public var runState: RunState
     public var artifact: Artifact?
+    public var isPreview: Bool
 
     public init(
         taskID: String,
@@ -102,10 +105,13 @@ public struct Task: Codable, Equatable, Sendable, Identifiable {
         createdAt: Date,
         updatedAt: Date,
         currentSummary: String,
+        output: String = "",
+        taskEvents: [TaskEvent] = [],
         availableActions: [TaskAction] = [],
         capabilities: AgentCapability = AgentCapability(),
         runState: RunState,
-        artifact: Artifact? = nil
+        artifact: Artifact? = nil,
+        isPreview: Bool = false
     ) {
         self.taskID = taskID
         self.title = title
@@ -116,14 +122,59 @@ public struct Task: Codable, Equatable, Sendable, Identifiable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.currentSummary = currentSummary
+        self.output = output
+        self.taskEvents = taskEvents
         self.availableActions = availableActions
         self.capabilities = capabilities
         self.runState = runState
         self.artifact = artifact
+        self.isPreview = isPreview
     }
 
     public var id: String { taskID }
     public var state: TaskState { runState.state }
+
+    public var latestOutputSummary: String? {
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            return nil
+        }
+
+        if trimmed.count <= 320 {
+            return trimmed
+        }
+
+        let suffix = trimmed.suffix(320)
+        return "…\(suffix)"
+    }
+
+    public static func liveHermesTask(
+        taskID: String = UUID().uuidString,
+        title: String,
+        input: String,
+        runID: String,
+        sessionID: String? = nil,
+        createdAt: Date = .now
+    ) -> Task {
+        Task(
+            taskID: taskID,
+            title: title,
+            source: .manual,
+            agentID: "hermes",
+            sessionID: sessionID,
+            runID: runID,
+            createdAt: createdAt,
+            updatedAt: createdAt,
+            currentSummary: input,
+            availableActions: [.stop, .openWorkspace],
+            runState: RunState(
+                state: .queued,
+                phaseLabel: "Run started",
+                lastEventAt: createdAt,
+                progressHint: "Connecting to Hermes event stream"
+            )
+        )
+    }
 }
 
 public extension Sequence where Element == Task {
@@ -134,6 +185,10 @@ public extension Sequence where Element == Task {
 
             if leftRank != rightRank {
                 return leftRank < rightRank
+            }
+
+            if lhs.isPreview != rhs.isPreview {
+                return lhs.isPreview == false
             }
 
             if lhs.updatedAt != rhs.updatedAt {
@@ -162,7 +217,8 @@ public extension Task {
                     phaseLabel: "Approval requested",
                     lastEventAt: now.addingTimeInterval(-120),
                     waitingReason: "Destructive shell command"
-                )
+                ),
+                isPreview: true
             ),
             Task(
                 taskID: "task_failed_tests",
@@ -177,7 +233,8 @@ public extension Task {
                     lastEventAt: now.addingTimeInterval(-600),
                     failureCategory: .toolError,
                     failureMessage: "Swift build exited with a non-zero status."
-                )
+                ),
+                isPreview: true
             ),
             Task(
                 taskID: "task_running_ui",
@@ -191,7 +248,8 @@ public extension Task {
                     phaseLabel: "Reviewing SwiftUI files",
                     lastEventAt: now.addingTimeInterval(-30),
                     progressHint: "Inspecting the app shell structure"
-                )
+                ),
+                isPreview: true
             ),
             Task(
                 taskID: "task_queued_detail_panel",
@@ -204,7 +262,8 @@ public extension Task {
                     state: .queued,
                     phaseLabel: "Queued",
                     lastEventAt: now.addingTimeInterval(-300)
-                )
+                ),
+                isPreview: true
             ),
             Task(
                 taskID: "task_paused_copy_review",
@@ -218,7 +277,8 @@ public extension Task {
                     phaseLabel: "Paused for review",
                     lastEventAt: now.addingTimeInterval(-900),
                     waitingReason: "Copy review"
-                )
+                ),
+                isPreview: true
             ),
             Task(
                 taskID: "task_result_bootstrap",
@@ -248,7 +308,8 @@ public extension Task {
                         "Review the generated project in Xcode",
                         "Compare the preview result shape with the upcoming Hermes task feed"
                     ]
-                )
+                ),
+                isPreview: true
             ),
             Task(
                 taskID: "task_cancelled_onboarding",
@@ -261,7 +322,8 @@ public extension Task {
                     state: .cancelled,
                     phaseLabel: "Cancelled",
                     lastEventAt: now.addingTimeInterval(-2_100)
-                )
+                ),
+                isPreview: true
             )
         ]
     }

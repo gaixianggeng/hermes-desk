@@ -8,15 +8,18 @@ extension URLSession: HTTPSession {}
 
 public struct HealthClient: Sendable {
     public let endpoint: HermesEndpoint
+    private let apiKey: String?
     private let session: any HTTPSession
     private let timeout: TimeInterval
 
     public init(
         endpoint: HermesEndpoint = .defaultLocal,
+        apiKey: String? = nil,
         session: any HTTPSession = URLSession.shared,
         timeout: TimeInterval = 3
     ) {
         self.endpoint = endpoint
+        self.apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? apiKey : nil
         self.session = session
         self.timeout = timeout
     }
@@ -30,6 +33,10 @@ public struct HealthClient: Sendable {
         request.httpMethod = "GET"
         request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        if let apiKey, apiKey.isEmpty == false {
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
 
         do {
             let (data, response) = try await session.data(for: request)
