@@ -140,11 +140,26 @@ final class AppStateStore: ObservableObject {
         "hermes-desk-\(agentID)-"
     }
 
+    nonisolated static func legacyManagedSessionPrefix(forAgentID agentID: String) -> String {
+        "agent-hub-\(agentID)-"
+    }
+
+    nonisolated static func managedSessionPrefixes(forAgentID agentID: String) -> [String] {
+        [
+            managedSessionPrefix(forAgentID: agentID),
+            legacyManagedSessionPrefix(forAgentID: agentID)
+        ]
+    }
+
     nonisolated static func managedAgentID(
         fromRootSessionID rootSessionID: String,
         agents: [HermesAgentDescriptor]
     ) -> String? {
-        agents.first { rootSessionID.hasPrefix(managedSessionPrefix(forAgentID: $0.agentID)) }?.agentID
+        agents.first {
+            managedSessionPrefixes(forAgentID: $0.agentID).contains { prefix in
+                rootSessionID.hasPrefix(prefix)
+            }
+        }?.agentID
     }
 
     nonisolated static func isManagedWorkspaceSession(
@@ -155,7 +170,9 @@ final class AppStateStore: ObservableObject {
         guard source?.lowercased() == "api_server" else {
             return false
         }
-        return rootSessionID.hasPrefix(managedSessionPrefix(forAgentID: agentID))
+        return managedSessionPrefixes(forAgentID: agentID).contains { prefix in
+            rootSessionID.hasPrefix(prefix)
+        }
     }
 
     nonisolated static func isManagedWorkspaceTask(_ task: Task) -> Bool {

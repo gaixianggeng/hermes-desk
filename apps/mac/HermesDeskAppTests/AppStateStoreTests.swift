@@ -38,6 +38,7 @@ final class AppStateStoreTests: XCTestCase {
 
         XCTAssertEqual(AppStateStore.managedAgentID(fromRootSessionID: "hermes-desk-alpha01-task-a", agents: agents), "alpha01")
         XCTAssertEqual(AppStateStore.managedAgentID(fromRootSessionID: "hermes-desk-beta01-task-b", agents: agents), "beta01")
+        XCTAssertEqual(AppStateStore.managedAgentID(fromRootSessionID: "agent-hub-alpha01-task-a", agents: agents), "alpha01")
         XCTAssertNil(AppStateStore.managedAgentID(fromRootSessionID: "20260413_224005_40517084", agents: agents))
     }
 
@@ -45,6 +46,13 @@ final class AppStateStoreTests: XCTestCase {
         XCTAssertTrue(
             AppStateStore.isManagedWorkspaceSession(
                 rootSessionID: "hermes-desk-alpha01-task-a",
+                source: "api_server",
+                agentID: "alpha01"
+            )
+        )
+        XCTAssertTrue(
+            AppStateStore.isManagedWorkspaceSession(
+                rootSessionID: "agent-hub-alpha01-task-a",
                 source: "api_server",
                 agentID: "alpha01"
             )
