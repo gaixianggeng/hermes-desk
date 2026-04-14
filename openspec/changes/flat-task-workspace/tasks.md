@@ -22,3 +22,4 @@
 - [ ] 4.2 Decide whether the first task-list iteration should be heuristic, protocol-driven, or both
 - [ ] 4.3 Implement the chosen task-list strategy without misrepresenting unstructured progress text as authoritative checklist data
 - [ ] 4.4 Re-validate the workspace UX after thinking/task-list follow-up work lands
+- [ ] 4.5 Add a Settings entry for `API_SERVER_KEY` so Hermes Desk can edit runtime auth configuration without manual `.env` changes
