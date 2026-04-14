@@ -5,6 +5,7 @@ import SwiftUI
 
 struct DashboardView: View {
     @EnvironmentObject private var appState: AppStateStore
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var listScope: WorkspaceListScope = .active
     @State private var taskFilter: WorkspaceTaskFilter = .all
@@ -272,81 +273,98 @@ struct DashboardView: View {
     }
 
     private var workspaceColumn: some View {
-        VStack(spacing: 0) {
-            if let task = appState.selectedTask {
-                let entries = workspaceFeedEntries(for: task)
-                workspaceHeader(task)
-                Divider()
-                GeometryReader { geometry in
-                    ScrollViewReader { scrollProxy in
-                        ScrollView {
-                            VStack(spacing: 10) {
-                                automaticLoadOlderMessagesSentinel(for: task)
-                                let availableFeedWidth = max(geometry.size.width - 16, 320)
-                                ForEach(entries) { entry in
-                                    workspaceFeedRow(entry, availableWidth: availableFeedWidth)
-                                        .id(entry.id)
-                                        .transition(workspaceFeedEntryTransition(for: entry))
+        ZStack {
+            workspaceCanvasBackground
+
+            VStack(spacing: 0) {
+                if let task = appState.selectedTask {
+                    let entries = workspaceFeedEntries(for: task)
+                    workspaceHeader(task)
+                    Divider()
+                        .overlay(Color.black.opacity(colorScheme == .dark ? 0.18 : 0.06))
+
+                    GeometryReader { geometry in
+                        ScrollViewReader { scrollProxy in
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: 18) {
+                                    automaticLoadOlderMessagesSentinel(for: task)
+                                        .frame(maxWidth: 860)
+
+                                    workspaceTaskBrief(task)
+                                        .frame(maxWidth: 860)
+
+                                    workspaceStatusStrip(task)
+                                        .frame(maxWidth: 860)
+
+                                    let availableFeedWidth = max(geometry.size.width - 48, 320)
+                                    ForEach(entries) { entry in
+                                        workspaceFeedRow(entry, availableWidth: availableFeedWidth)
+                                            .id(entry.id)
+                                            .transition(workspaceFeedEntryTransition(for: entry))
+                                    }
+
+                                    Color.clear
+                                        .frame(height: 1)
+                                        .id(workspaceBottomAnchorID(for: task.taskID))
                                 }
-                                Color.clear
-                                    .frame(height: 1)
-                                    .id(workspaceBottomAnchorID(for: task.taskID))
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 24)
+                                .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .top)
+                                .animation(.spring(response: 0.46, dampingFraction: 0.90, blendDuration: 0.20), value: workspaceFeedAnimationKey(entries))
                             }
-                            .padding(.vertical, 12)
-                            .padding(.horizontal, 8)
-                            .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .bottomLeading)
-                            .animation(.spring(response: 0.46, dampingFraction: 0.90, blendDuration: 0.20), value: workspaceFeedAnimationKey(entries))
-                        }
-                        .background(
-                            WorkspaceScrollObserver(
-                                metrics: $workspaceScrollMetrics,
-                                command: $workspaceScrollCommand
+                            .background(
+                                WorkspaceScrollObserver(
+                                    metrics: $workspaceScrollMetrics,
+                                    command: $workspaceScrollCommand
+                                )
                             )
-                        )
-                        .onAppear {
-                            shouldAutoScrollSelectedTask = true
-                            pendingForcedAutoScrollTaskID = task.taskID
-                            queueWorkspaceScrollToBottom(using: scrollProxy, for: task.taskID, force: true)
-                        }
-                        .onChange(of: task.taskID) { _, _ in
-                            autoLoadingOlderTaskID = nil
-                            automaticOlderLoadingEnabledTaskID = nil
-                            shouldAutoScrollSelectedTask = true
-                            pendingForcedAutoScrollTaskID = task.taskID
-                            workspaceScrollMetrics = WorkspaceScrollMetrics()
-                            queueWorkspaceScrollToBottom(using: scrollProxy, for: task.taskID, force: true)
-                        }
-                        .onChange(of: workspaceFeedTailAnchor(entries)) { _, _ in
-                            if shouldAutoScrollSelectedTask || pendingForcedAutoScrollTaskID == task.taskID {
-                                queueWorkspaceScrollToBottom(using: scrollProxy, for: task.taskID)
-                            }
-                        }
-                        .onChange(of: workspaceScrollMetrics) { _, newMetrics in
-                            if newMetrics.viewportHeight > 0,
-                               newMetrics.contentHeight > 0,
-                               pendingForcedAutoScrollTaskID != task.taskID {
-                                shouldAutoScrollSelectedTask = newMetrics.isNearBottom
-                            }
-                            if pendingForcedAutoScrollTaskID == task.taskID, newMetrics.isNearBottom {
-                                pendingForcedAutoScrollTaskID = nil
+                            .onAppear {
                                 shouldAutoScrollSelectedTask = true
+                                pendingForcedAutoScrollTaskID = task.taskID
+                                queueWorkspaceScrollToBottom(using: scrollProxy, for: task.taskID, force: true)
                             }
-                            if automaticOlderLoadingEnabledTaskID != task.taskID,
-                               workspaceScrollCommand == nil,
-                               newMetrics.viewportHeight > 0,
-                               newMetrics.contentHeight > 0,
-                                newMetrics.isNearBottom {
-                                automaticOlderLoadingEnabledTaskID = task.taskID
+                            .onChange(of: task.taskID) { _, _ in
+                                autoLoadingOlderTaskID = nil
+                                automaticOlderLoadingEnabledTaskID = nil
+                                shouldAutoScrollSelectedTask = true
+                                pendingForcedAutoScrollTaskID = task.taskID
+                                workspaceScrollMetrics = WorkspaceScrollMetrics()
+                                queueWorkspaceScrollToBottom(using: scrollProxy, for: task.taskID, force: true)
+                            }
+                            .onChange(of: workspaceFeedTailAnchor(entries)) { _, _ in
+                                if shouldAutoScrollSelectedTask || pendingForcedAutoScrollTaskID == task.taskID {
+                                    queueWorkspaceScrollToBottom(using: scrollProxy, for: task.taskID)
+                                }
+                            }
+                            .onChange(of: workspaceScrollMetrics) { _, newMetrics in
+                                if newMetrics.viewportHeight > 0,
+                                   newMetrics.contentHeight > 0,
+                                   pendingForcedAutoScrollTaskID != task.taskID {
+                                    shouldAutoScrollSelectedTask = newMetrics.isNearBottom
+                                }
+                                if pendingForcedAutoScrollTaskID == task.taskID, newMetrics.isNearBottom {
+                                    pendingForcedAutoScrollTaskID = nil
+                                    shouldAutoScrollSelectedTask = true
+                                }
+                                if automaticOlderLoadingEnabledTaskID != task.taskID,
+                                   workspaceScrollCommand == nil,
+                                   newMetrics.viewportHeight > 0,
+                                   newMetrics.contentHeight > 0,
+                                   newMetrics.isNearBottom {
+                                    automaticOlderLoadingEnabledTaskID = task.taskID
+                                }
                             }
                         }
                     }
-                }
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        newTaskHero
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 24) {
+                            newTaskHero
+                                .frame(maxWidth: 860)
+                        }
+                        .padding(24)
+                        .frame(maxWidth: .infinity, alignment: .top)
                     }
-                    .padding(24)
                 }
             }
         }
@@ -357,9 +375,11 @@ struct DashboardView: View {
 
     private func workspaceComposerInset(task: Task?) -> some View {
         VStack(spacing: 0) {
-            Divider()
             workspaceComposer(task: task)
-                .padding(20)
+                .padding(.horizontal, 24)
+                .padding(.top, 14)
+                .padding(.bottom, 18)
+                .frame(maxWidth: .infinity)
                 .background(.ultraThinMaterial)
         }
     }
@@ -443,6 +463,36 @@ struct DashboardView: View {
         }
     }
 
+    private var workspaceCanvasBackground: some View {
+        ZStack {
+            LinearGradient(
+                colors: workspaceCanvasGradientColors,
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            Rectangle()
+                .fill(Color.white.opacity(colorScheme == .dark ? 0.02 : 0.28))
+                .blur(radius: colorScheme == .dark ? 0 : 36)
+        }
+        .ignoresSafeArea()
+    }
+
+    private var workspaceCanvasGradientColors: [Color] {
+        if colorScheme == .dark {
+            return [
+                Color(nsColor: .windowBackgroundColor),
+                Color.black.opacity(0.92)
+            ]
+        }
+
+        return [
+            Color(red: 0.98, green: 0.96, blue: 0.89),
+            Color(red: 0.97, green: 0.94, blue: 0.86),
+            Color(red: 0.95, green: 0.93, blue: 0.87)
+        ]
+    }
+
     private func workspaceHeader(_ task: Task) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 16) {
@@ -485,7 +535,7 @@ struct DashboardView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color.white.opacity(colorScheme == .dark ? 0.04 : 0.38))
     }
 
     private var newTaskHero: some View {
@@ -501,7 +551,14 @@ struct DashboardView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(Color.white.opacity(colorScheme == .dark ? 0.06 : 0.74))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(Color.black.opacity(colorScheme == .dark ? 0.16 : 0.06), lineWidth: 1)
+        )
     }
 
     private func workspaceStatusStrip(_ task: Task) -> some View {
@@ -595,7 +652,14 @@ struct DashboardView: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color.white.opacity(colorScheme == .dark ? 0.06 : 0.74))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color.black.opacity(colorScheme == .dark ? 0.14 : 0.06), lineWidth: 1)
+        )
     }
 
     private func workspaceBriefMetric(title: String, value: String, tint: Color) -> some View {
@@ -653,154 +717,128 @@ struct DashboardView: View {
                 .multilineTextAlignment(.leading)
         }
         .padding(14)
-        .frame(width: 200, alignment: .leading)
-        .background(tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .frame(width: 220, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.white.opacity(colorScheme == .dark ? 0.05 : 0.68))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(tint.opacity(colorScheme == .dark ? 0.22 : 0.18), lineWidth: 1)
+        )
     }
 
     private func workspaceFeedRow(_ entry: WorkspaceFeedEntry, availableWidth: CGFloat) -> some View {
-        let palette = workspaceBubblePalette(for: entry)
-        let titleColor: Color = entry.alignment == .trailing ? Color.white.opacity(0.96) : entry.tint
-        let bodyColor: Color = entry.alignment == .trailing ? Color.white : Color.primary
-        let footerColor: Color = entry.alignment == .trailing ? Color.white.opacity(0.74) : Color.secondary
-        let progressTint: Color = entry.alignment == .trailing ? Color.white.opacity(0.88) : entry.tint
-        let shouldShowHeader = entry.title.isEmpty == false
-        let edgePadding = workspaceFeedEdgePadding(for: availableWidth)
-        let oppositeInset = workspaceFeedOppositeInset(for: availableWidth)
-        let bubbleMaxWidth = workspaceBubbleMaxWidth(
-            for: availableWidth,
-            oppositeInset: oppositeInset,
-            edgePadding: edgePadding
-        )
-        let bubbleMinWidth = workspaceBubbleMinWidth(for: entry, availableWidth: bubbleMaxWidth)
-        let bubbleWidth = workspaceBubbleWidth(
-            for: entry,
-            bubbleMaxWidth: bubbleMaxWidth,
-            minimumWidth: bubbleMinWidth
-        )
-        let contentWidth = max(bubbleWidth - 32, 120)
+        let palette = workspaceCardPalette(for: entry)
+        let cardWidth = min(max(availableWidth - 8, 320), 860)
 
-        let bubble = VStack(alignment: .leading, spacing: 10) {
-                if shouldShowHeader {
-                    Text(entry.title)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(titleColor)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 10) {
+                Text(entry.title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(palette.title)
+
+                Spacer(minLength: 12)
+
+                if entry.showsProgress {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(palette.accent)
                 }
+            }
 
-                Group {
-                    if entry.monospaced {
+            Group {
+                if entry.monospaced {
+                    ScrollView(.horizontal, showsIndicators: false) {
                         Text(entry.body)
                             .font(.callout.monospaced())
                             .fixedSize(horizontal: false, vertical: true)
-                            .frame(width: contentWidth, alignment: .leading)
-                    } else {
-                        workspaceBodyView(entry.body)
-                            .frame(width: contentWidth, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                }
-                .foregroundStyle(bodyColor)
-                .textSelection(.enabled)
-
-                if let footer = entry.footer {
-                    Text(footer)
-                        .font(.caption)
-                        .foregroundStyle(footerColor)
-                        .frame(
-                            maxWidth: .infinity,
-                            alignment: entry.alignment == .trailing ? .trailing : .leading
-                        )
+                } else {
+                    workspaceBodyView(entry.body)
                 }
             }
-            .padding(.top, 14)
-            .padding(.horizontal, 16)
-            .padding(.bottom, 14)
-            .frame(width: bubbleWidth, alignment: .leading)
-            .background {
-                workspaceFeedBubbleBackground(for: entry, palette: palette)
+            .foregroundStyle(.primary)
+            .textSelection(.enabled)
+
+            if let footer = entry.footer, footer.isEmpty == false {
+                Text(footer)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-
-        return HStack(alignment: .center, spacing: 10) {
-            if entry.alignment == .trailing { Spacer(minLength: oppositeInset) }
-
-            if entry.alignment == .trailing, entry.showsProgress {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(progressTint)
-            }
-
-            bubble
-
-            if entry.alignment == .leading { Spacer(minLength: oppositeInset) }
         }
-        .padding(.horizontal, edgePadding)
+        .padding(18)
+        .frame(maxWidth: cardWidth, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(palette.background)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(palette.border, lineWidth: 1)
+        )
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 999, style: .continuous)
+                .fill(palette.accent)
+                .frame(width: 4)
+                .padding(.vertical, 16)
+                .padding(.leading, 10)
+        }
+        .shadow(color: palette.shadow, radius: 14, x: 0, y: 8)
         .frame(maxWidth: .infinity)
     }
 
-    @ViewBuilder
-    private func workspaceFeedBubbleBackground(
-        for entry: WorkspaceFeedEntry,
-        palette: WorkspaceBubblePalette
-    ) -> some View {
-        let gradient = LinearGradient(
-            colors: [palette.top, palette.bottom],
-            startPoint: entry.alignment == .trailing ? .topLeading : .topTrailing,
-            endPoint: .bottomTrailing
-        )
-        let bubbleShape = WorkspaceBubbleShape(alignment: entry.alignment)
-
-        bubbleShape
-            .fill(gradient)
-            .overlay(
-                bubbleShape
-                    .stroke(palette.stroke, lineWidth: 0.8)
-            )
-            .shadow(color: palette.shadow, radius: 3, x: 0, y: 1)
-    }
-
-    private func workspaceBubblePalette(for entry: WorkspaceFeedEntry) -> WorkspaceBubblePalette {
+    private func workspaceCardPalette(for entry: WorkspaceFeedEntry) -> WorkspaceCardPalette {
         switch entry.bubbleStyle {
         case .automatic:
             if entry.alignment == .trailing {
-                return WorkspaceBubblePalette(
-                    top: Color(red: 0.00, green: 0.48, blue: 1.00),
-                    bottom: Color(red: 0.03, green: 0.50, blue: 1.00),
-                    stroke: Color.white.opacity(0.14),
-                    shadow: Color.accentColor.opacity(0.035)
+                return WorkspaceCardPalette(
+                    background: Color.accentColor.opacity(colorScheme == .dark ? 0.18 : 0.10),
+                    border: Color.accentColor.opacity(colorScheme == .dark ? 0.30 : 0.18),
+                    accent: Color.accentColor,
+                    shadow: Color.accentColor.opacity(0.12),
+                    title: Color.accentColor
                 )
             }
-            return WorkspaceBubblePalette(
-                top: Color.white,
-                bottom: Color(red: 0.97, green: 0.97, blue: 0.98),
-                stroke: Color.black.opacity(0.055),
-                shadow: Color.black.opacity(0.022)
+            return WorkspaceCardPalette(
+                background: Color.white.opacity(colorScheme == .dark ? 0.06 : 0.76),
+                border: Color.black.opacity(colorScheme == .dark ? 0.16 : 0.06),
+                accent: Color.secondary.opacity(0.65),
+                shadow: Color.black.opacity(colorScheme == .dark ? 0.10 : 0.05),
+                title: entry.alignment == .trailing ? Color.accentColor : .primary
             )
         case .success:
-            return WorkspaceBubblePalette(
-                top: Color.green.opacity(0.16),
-                bottom: Color.green.opacity(0.09),
-                stroke: Color.green.opacity(0.16),
-                shadow: Color.green.opacity(0.06)
+            return WorkspaceCardPalette(
+                background: Color.green.opacity(colorScheme == .dark ? 0.16 : 0.10),
+                border: Color.green.opacity(0.20),
+                accent: .green,
+                shadow: Color.green.opacity(0.10),
+                title: .green
             )
         case .progress:
-            return WorkspaceBubblePalette(
-                top: Color.blue.opacity(0.14),
-                bottom: Color.blue.opacity(0.08),
-                stroke: Color.blue.opacity(0.14),
-                shadow: Color.blue.opacity(0.05)
+            return WorkspaceCardPalette(
+                background: Color.blue.opacity(colorScheme == .dark ? 0.14 : 0.09),
+                border: Color.blue.opacity(0.18),
+                accent: .blue,
+                shadow: Color.blue.opacity(0.10),
+                title: .blue
             )
         case .tool:
-            return WorkspaceBubblePalette(
-                top: Color(nsColor: .textBackgroundColor),
-                bottom: Color.secondary.opacity(0.08),
-                stroke: Color.secondary.opacity(0.14),
-                shadow: Color.black.opacity(0.03)
+            return WorkspaceCardPalette(
+                background: Color(nsColor: .textBackgroundColor).opacity(colorScheme == .dark ? 0.42 : 0.92),
+                border: Color.secondary.opacity(0.16),
+                accent: .secondary,
+                shadow: Color.black.opacity(0.06),
+                title: .secondary
             )
         case .system:
-            return WorkspaceBubblePalette(
-                top: Color.orange.opacity(0.16),
-                bottom: Color.orange.opacity(0.09),
-                stroke: Color.orange.opacity(0.15),
-                shadow: Color.orange.opacity(0.05)
+            return WorkspaceCardPalette(
+                background: Color.orange.opacity(colorScheme == .dark ? 0.16 : 0.10),
+                border: Color.orange.opacity(0.18),
+                accent: .orange,
+                shadow: Color.orange.opacity(0.08),
+                title: .orange
             )
         }
     }
@@ -814,6 +852,26 @@ struct DashboardView: View {
         }
 
         return VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 10) {
+                Label(
+                    task == nil
+                        ? appState.text(zh: "新任务草稿", en: "New task draft")
+                        : appState.text(zh: "继续当前任务", en: "Continue task"),
+                    systemImage: task == nil ? "sparkles.rectangle.stack" : "ellipsis.message"
+                )
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+                Spacer(minLength: 12)
+
+                if let task {
+                    Text(workspaceDisplayTitle(for: task))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
             TextField(
                 placeholder,
                 text: $composerPromptDraft,
@@ -822,13 +880,13 @@ struct DashboardView: View {
             .textFieldStyle(.plain)
             .font(.body)
             .lineLimit(3 ... 8)
-            .padding(12)
+            .padding(14)
             .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(nsColor: .textBackgroundColor))
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color(nsColor: .textBackgroundColor).opacity(colorScheme == .dark ? 0.86 : 0.96))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
             )
             .focused($composerIsFocused)
@@ -849,7 +907,14 @@ struct DashboardView: View {
             }
 
             HStack {
+                if task == nil {
+                    Text(appState.text(zh: "从任务而不是气泡对话开始。", en: "Start from a task, not a chat bubble."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Spacer(minLength: 12)
+
                 Button {
                     submitComposer(for: task)
                 } label: {
@@ -863,6 +928,17 @@ struct DashboardView: View {
                 .disabled(appState.isStartingRun || composerPromptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
+        .padding(18)
+        .frame(maxWidth: 920, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(Color.white.opacity(colorScheme == .dark ? 0.06 : 0.70))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(Color.black.opacity(colorScheme == .dark ? 0.14 : 0.06), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.18 : 0.06), radius: 18, x: 0, y: -2)
     }
 
     private var inspectorColumn: some View {
@@ -1537,6 +1613,7 @@ struct DashboardView: View {
         }
 
         let conversationMessages = transcriptMessages.filter(\.shouldDisplayInWorkspaceConversation)
+        let progressMessages = transcriptMessages.filter(\.shouldRouteToTaskProgress)
         let visibleMessages = transcriptMessages.filter { $0.shouldDisplayInWorkspace(mode: transcriptDisplayMode) }
         let latestConversationAssistantID = conversationMessages
             .reversed()
@@ -1547,17 +1624,27 @@ struct DashboardView: View {
             workspaceFeedEntry(for: message, task: task, latestConversationAssistantID: latestConversationAssistantID)
         }
         entries.append(contentsOf: pendingEntries)
-        if task.isPreview, let streamingEntry = workspaceStreamingEntry(for: task, transcriptMessages: visibleMessages) {
+
+        if transcriptDisplayMode == .conversation,
+           let progressEntry = workspaceProgressActivityEntry(for: task, progressMessages: progressMessages) {
+            entries.append(progressEntry)
+        }
+
+        if let streamingEntry = workspaceStreamingEntry(for: task, transcriptMessages: visibleMessages) {
             entries.append(streamingEntry)
         }
-        if task.isPreview,
-           let artifact = task.artifact,
+
+        if let taskStateEntry = workspaceTaskStateEntry(for: task) {
+            entries.append(taskStateEntry)
+        }
+
+        if let artifact = task.artifact,
            artifact.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
            artifact.summary != conversationMessages.last?.displayText {
             entries.append(
                 WorkspaceFeedEntry(
                     id: "artifact-\(task.taskID)",
-                    title: "Result snapshot",
+                    title: appState.text(zh: "结果摘要", en: "Result snapshot"),
                     body: artifact.summary,
                     footer: artifact.keyOutputs.prefix(2).joined(separator: " • "),
                     alignment: .leading,
@@ -1568,7 +1655,8 @@ struct DashboardView: View {
                 )
             )
         }
-        return entries
+
+        return deduplicateWorkspaceFeedEntries(entries)
     }
 
     private func loadingWorkspaceFeedEntries(for task: Task) -> [WorkspaceFeedEntry] {
@@ -1576,7 +1664,7 @@ struct DashboardView: View {
         var entries: [WorkspaceFeedEntry] = [
             WorkspaceFeedEntry(
                 id: "loading-history-\(task.taskID)",
-                title: appState.text(zh: "正在加载最近聊天记录", en: "Loading recent history"),
+                title: appState.text(zh: "正在加载最近记录", en: "Loading recent history"),
                 body: appState.text(
                     zh: "首次只加载最近一段对话，避免一上来把整段历史全部拉进来。你可以随后手动加载更早消息。",
                     en: "The workspace loads only the most recent part of the conversation first so it does not block on the full history. You can load earlier messages on demand."
@@ -1595,7 +1683,7 @@ struct DashboardView: View {
             entries.append(
                 WorkspaceFeedEntry(
                     id: "task-request-\(task.taskID)",
-                    title: "You asked Hermes",
+                    title: appState.text(zh: "任务请求", en: "Request"),
                     body: requestBody,
                     footer: task.createdAt.formatted(date: .abbreviated, time: .shortened),
                     alignment: .trailing,
@@ -1616,7 +1704,7 @@ struct DashboardView: View {
         var entries: [WorkspaceFeedEntry] = [
             WorkspaceFeedEntry(
                 id: "task-request-\(task.taskID)",
-                title: "You asked Hermes",
+                title: appState.text(zh: "任务请求", en: "Request"),
                 body: requestBody,
                 footer: task.createdAt.formatted(date: .abbreviated, time: .shortened),
                 alignment: .trailing,
@@ -1632,7 +1720,9 @@ struct DashboardView: View {
             entries.append(
                 WorkspaceFeedEntry(
                     id: "task-summary-\(task.taskID)",
-                    title: task.state == .succeeded ? "Hermes result" : "Hermes update",
+                    title: task.state == .succeeded
+                        ? appState.text(zh: "结果摘要", en: "Result snapshot")
+                        : appState.text(zh: "最新更新", en: "Latest update"),
                     body: resultSummary,
                     footer: task.state.localizedDisplayTitle,
                     alignment: .leading,
@@ -1647,7 +1737,7 @@ struct DashboardView: View {
             entries.append(
                 WorkspaceFeedEntry(
                     id: "artifact-\(task.taskID)",
-                    title: "Result snapshot",
+                    title: appState.text(zh: "结果摘要", en: "Result snapshot"),
                     body: artifact.summary,
                     footer: artifact.keyOutputs.prefix(2).joined(separator: " • "),
                     alignment: .leading,
@@ -1674,16 +1764,25 @@ struct DashboardView: View {
 
         switch message.role {
         case .user:
-            title = ""
+            title = appState.text(zh: "你的输入", en: "Request")
             background = Color.accentColor.opacity(0.16)
             tint = .accentColor
             bubbleStyle = .automatic
         case .assistant:
             let isLatestStableAnswer = task.state.isTerminal && latestConversationAssistantID == message.id
-            title = ""
-            background = isLatestStableAnswer ? Color.green.opacity(0.08) : Color.secondary.opacity(0.08)
-            tint = isLatestStableAnswer ? .green : .secondary
-            bubbleStyle = isLatestStableAnswer ? .success : .automatic
+            if message.workspaceClassification == .progress {
+                title = appState.text(zh: "工作过程", en: "Work log")
+                background = Color.blue.opacity(0.08)
+                tint = .blue
+                bubbleStyle = .progress
+            } else {
+                title = isLatestStableAnswer
+                    ? appState.text(zh: "最终回复", en: "Final response")
+                    : appState.displayName(forAgentID: task.agentID)
+                background = isLatestStableAnswer ? Color.green.opacity(0.08) : Color.secondary.opacity(0.08)
+                tint = isLatestStableAnswer ? .green : .secondary
+                bubbleStyle = isLatestStableAnswer ? .success : .automatic
+            }
         case .tool:
             title = message.toolName.map { "Tool · \($0)" } ?? "Tool output"
             background = Color.secondary.opacity(0.08)
@@ -1718,7 +1817,7 @@ struct DashboardView: View {
         appState.pendingOutgoingMessages(for: task).map { pendingMessage in
             WorkspaceFeedEntry(
                 id: appState.stableWorkspaceEntryID(for: pendingMessage, taskID: task.taskID),
-                title: "",
+                title: appState.text(zh: "发送中", en: "Sending"),
                 body: pendingMessage.content,
                 footer: pendingMessage.timestamp.formatted(date: .omitted, time: .shortened),
                 alignment: .trailing,
@@ -1739,9 +1838,9 @@ struct DashboardView: View {
         if let streamingText = workspaceStreamingText(for: task, transcriptMessages: transcriptMessages) {
             return WorkspaceFeedEntry(
                 id: "streaming-\(task.taskID)",
-                title: "Hermes · draft",
+                title: appState.text(zh: "实时草稿", en: "Live draft"),
                 body: streamingText,
-                footer: "Streaming live now · not final yet",
+                footer: appState.text(zh: "正在实时生成，暂未定稿", en: "Streaming live now · not final yet"),
                 alignment: .leading,
                 background: Color.blue.opacity(0.08),
                 tint: .blue,
@@ -1753,8 +1852,11 @@ struct DashboardView: View {
 
         return WorkspaceFeedEntry(
             id: "streaming-status-\(task.taskID)",
-            title: "Hermes is working",
-            body: "Hermes is still executing this task. Tool, terminal, and agent activity stays in Task progress so the conversation view can stay focused on useful answers.",
+            title: appState.text(zh: "正在处理中", en: "Hermes is working"),
+            body: appState.text(
+                zh: "Hermes 仍在处理这个任务。主区会优先展示有用回复，底层工具和终端细节会继续沉淀在进度区。",
+                en: "Hermes is still executing this task. The main workspace keeps useful updates in view while tool and terminal detail stays in progress."
+            ),
             footer: task.runState.phaseLabel,
             alignment: .leading,
             background: Color.blue.opacity(0.06),
@@ -1780,8 +1882,11 @@ struct DashboardView: View {
 
         return WorkspaceFeedEntry(
             id: "progress-activity-\(task.taskID)-\(totalUpdates)",
-            title: "Task progress",
-            body: "Captured \(totalUpdates) low-level update\(totalUpdates == 1 ? "" : "s") from tools, terminals, and streaming execution details. Those logs stay in Task progress instead of the main conversation.",
+            title: appState.text(zh: "任务进度", en: "Task progress"),
+            body: appState.text(
+                zh: "已经捕获 \(totalUpdates) 条底层执行更新，包括工具、终端和流式过程信号。主区只保留高信号内容，完整执行轨迹仍在进度区。",
+                en: "Captured \(totalUpdates) low-level update\(totalUpdates == 1 ? "" : "s") from tools, terminals, and streaming execution details. The main workspace stays concise while the full trail remains in Progress."
+            ),
             footer: footerParts.joined(separator: " · "),
             alignment: .leading,
             background: Color.secondary.opacity(0.08),
@@ -1789,6 +1894,50 @@ struct DashboardView: View {
             monospaced: false,
             bubbleStyle: .tool
         )
+    }
+
+    private func workspaceTaskStateEntry(for task: Task) -> WorkspaceFeedEntry? {
+        switch task.state {
+        case .waitingUser:
+            guard let waitingReason = task.runState.waitingReason, waitingReason.isEmpty == false else {
+                return nil
+            }
+            return WorkspaceFeedEntry(
+                id: "task-state-\(task.taskID)-waiting",
+                title: appState.text(zh: "等待你的决定", en: "Needs your decision"),
+                body: waitingReason,
+                footer: task.runState.phaseLabel,
+                alignment: .leading,
+                background: Color.orange.opacity(0.08),
+                tint: .orange,
+                monospaced: false,
+                bubbleStyle: .system
+            )
+        case .failed:
+            guard let failureMessage = task.runState.failureMessage, failureMessage.isEmpty == false else {
+                return nil
+            }
+            return WorkspaceFeedEntry(
+                id: "task-state-\(task.taskID)-failure",
+                title: appState.text(zh: "任务遇到问题", en: "Task hit an issue"),
+                body: failureMessage,
+                footer: task.runState.phaseLabel,
+                alignment: .leading,
+                background: Color.red.opacity(0.08),
+                tint: .red,
+                monospaced: false,
+                bubbleStyle: .system
+            )
+        default:
+            return nil
+        }
+    }
+
+    private func deduplicateWorkspaceFeedEntries(_ entries: [WorkspaceFeedEntry]) -> [WorkspaceFeedEntry] {
+        var seen = Set<String>()
+        return entries.filter { entry in
+            seen.insert(entry.id).inserted
+        }
     }
 
     private func workspaceStreamingText(for task: Task, transcriptMessages: [HermesConversationMessage]) -> String? {
@@ -2401,108 +2550,12 @@ private struct WorkspaceFeedEntry: Identifiable {
     }
 }
 
-private struct WorkspaceBubblePalette {
-    let top: Color
-    let bottom: Color
-    let stroke: Color
+private struct WorkspaceCardPalette {
+    let background: Color
+    let border: Color
+    let accent: Color
     let shadow: Color
-}
-
-private struct WorkspaceBubbleShape: InsettableShape {
-    let alignment: WorkspaceFeedEntry.Alignment
-    private var insetAmount: CGFloat = 0
-
-    init(alignment: WorkspaceFeedEntry.Alignment) {
-        self.alignment = alignment
-    }
-
-    func path(in rect: CGRect) -> Path {
-        let pathRect = rect.insetBy(dx: insetAmount, dy: insetAmount)
-        let trailingPath = trailingBubblePath(in: pathRect)
-
-        if alignment == .trailing {
-            return trailingPath
-        }
-
-        let transform = CGAffineTransform(translationX: pathRect.midX, y: 0)
-            .scaledBy(x: -1, y: 1)
-            .translatedBy(x: -pathRect.midX, y: 0)
-        return trailingPath.applying(transform)
-    }
-
-    func inset(by amount: CGFloat) -> some InsettableShape {
-        var copy = self
-        copy.insetAmount += amount
-        return copy
-    }
-
-    private func trailingBubblePath(in rect: CGRect) -> Path {
-        // iMessage-like bubble: rounded rect with a small curved tail
-        // centered on the side edge instead of hanging off the bottom corner.
-        let cr = min(18, rect.height * 0.28, rect.width * 0.12)
-        let tailH: CGFloat = 10    // tail vertical span
-        let tailW: CGFloat = 6     // how far the tail pokes out to the right
-        let bodyRight = rect.maxX - tailW  // main body right edge, leaving room for the tail
-
-        // Tail anchor sits around the middle of the right edge.
-        let tailCenterY = rect.midY + min(4, rect.height * 0.06)
-        let tailTopY = tailCenterY - tailH * 0.55
-        let tailBotY = tailCenterY + tailH * 0.45
-        let tailTipY = tailCenterY
-
-        var path = Path()
-
-        // Top-left corner
-        path.move(to: CGPoint(x: rect.minX + cr, y: rect.minY))
-
-        // Top edge → top-right corner (body right, not full rect)
-        path.addLine(to: CGPoint(x: bodyRight - cr, y: rect.minY))
-        path.addQuadCurve(
-            to: CGPoint(x: bodyRight, y: rect.minY + cr),
-            control: CGPoint(x: bodyRight, y: rect.minY)
-        )
-
-        // Right edge of body, down to where tail starts
-        path.addLine(to: CGPoint(x: bodyRight, y: tailTopY))
-
-        // Curve outward to form the tail tip
-        path.addCurve(
-            to: CGPoint(x: rect.maxX, y: tailTipY),
-            control1: CGPoint(x: bodyRight, y: tailTopY + tailH * 0.3),
-            control2: CGPoint(x: rect.maxX, y: tailTipY - tailH * 0.2)
-        )
-
-        // Curve back inward from the tip
-        path.addCurve(
-            to: CGPoint(x: bodyRight, y: tailBotY),
-            control1: CGPoint(x: rect.maxX, y: tailTipY + tailH * 0.3),
-            control2: CGPoint(x: bodyRight, y: tailBotY - tailH * 0.15)
-        )
-
-        // Continue down the right edge to bottom-right corner
-        path.addLine(to: CGPoint(x: bodyRight, y: rect.maxY - cr))
-        path.addQuadCurve(
-            to: CGPoint(x: bodyRight - cr, y: rect.maxY),
-            control: CGPoint(x: bodyRight, y: rect.maxY)
-        )
-
-        // Bottom edge → bottom-left corner
-        path.addLine(to: CGPoint(x: rect.minX + cr, y: rect.maxY))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.minX, y: rect.maxY - cr),
-            control: CGPoint(x: rect.minX, y: rect.maxY)
-        )
-
-        // Left edge → top-left corner
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + cr))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.minX + cr, y: rect.minY),
-            control: CGPoint(x: rect.minX, y: rect.minY)
-        )
-
-        path.closeSubpath()
-        return path
-    }
+    let title: Color
 }
 
 private struct WorkspaceFeedTailAnchor: Equatable {
