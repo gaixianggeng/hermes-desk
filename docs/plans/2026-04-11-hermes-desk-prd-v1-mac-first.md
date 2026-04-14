@@ -1,4 +1,4 @@
-# Agent Hub PRD v1（Mac-first）
+# Hermes Desk PRD v1（Mac-first）
 
 > **文档定位**：Phase 0 / Phase 1 产品需求文档  
 > **目标**：先做出一个让程序员自己愿意长期挂在 MenuBar 的 Agent 监督控制面  
@@ -23,7 +23,7 @@ Agent 的本质是 **Task-based**，而不是 **Chat-based**。
 > **一个能监督任务、处理确认、快速止损、回看结果的控制面。**
 
 ### 1.3 本期产品定义
-Agent Hub v1 不是移动端遥控器，而是：
+Hermes Desk v1 不是移动端遥控器，而是：
 
 > **Mac 上的 Agent 监督控制面（Supervisor Control Layer）**
 
@@ -99,14 +99,14 @@ Agent Hub v1 不是移动端遥控器，而是：
 - 是否有失败待恢复任务
 
 ### G2. 确认流高效可信
-当 Hermes 请求确认时，用户能在 Agent Hub 中看到：
+当 Hermes 请求确认时，用户能在 Hermes Desk 中看到：
 - 它要做什么
 - 为什么危险
 - 命令 / 路径 / patch 的关键证据
 - 允许 / 拒绝 / 更细粒度授权选项
 
 ### G3. 失败后可恢复
-当 Hermes 出错或中断时，Agent Hub 能提供明确恢复动作：
+当 Hermes 出错或中断时，Hermes Desk 能提供明确恢复动作：
 - 重试
 - 恢复
 - 终止
@@ -149,7 +149,7 @@ Agent Hub v1 不是移动端遥控器，而是：
 
 ## 6.2 Flow B：处理确认
 1. Hermes 发出确认请求
-2. Agent Hub 在 MenuBar 和详情页中高亮该任务
+2. Hermes Desk 在 MenuBar 和详情页中高亮该任务
 3. 用户点开确认卡片
 4. 查看简明说明 + 命令 / patch / 路径证据
 5. 选择：允许一次 / 本任务内允许 / 拒绝（Phase 1 再考虑“总是允许”）
@@ -159,7 +159,7 @@ Agent Hub v1 不是移动端遥控器，而是：
 
 ## 6.3 Flow C：失败恢复
 1. Hermes 任务失败
-2. Agent Hub 将任务列入“待恢复”优先区
+2. Hermes Desk 将任务列入“待恢复”优先区
 3. 用户打开详情页，看到失败分类、失败位置、上下文摘要
 4. 用户执行：重试 / 恢复 / 打开终端 / 取消
 
@@ -359,7 +359,7 @@ Agent Hub v1 不是移动端遥控器，而是：
 ### 11.1 依赖
 - Hermes API Server 可稳定使用
 - Hermes gateway / launchd 生命周期可被可靠检测
-- Hermes 确认流与任务事件可被接到 Agent Hub 的 UI 模型中
+- Hermes 确认流与任务事件可被接到 Hermes Desk 的 UI 模型中
 
 ### 11.2 风险
 | 风险 | 说明 | 缓解 |
@@ -383,7 +383,7 @@ Agent Hub v1 不是移动端遥控器，而是：
 
 ## 13. 下一步产出物
 本 PRD 对应以下落地文档：
-1. `Agent Hub 协议与状态机 v0.1`
+1. `Hermes Desk 协议与状态机 v0.1`
 2. `Phase 0 / Phase 1 实施计划（Mac 原生 + Hermes Adapter）`
 3. `3~7 天自用验证方案`
 

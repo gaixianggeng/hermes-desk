@@ -1,4 +1,4 @@
-name: AgentHub
+name: HermesDesk
 options:
   minimumXcodeGenVersion: 2.45.0
   groupSortPosition: top
@@ -12,26 +12,27 @@ packages:
     path: Packages/HermesKit
 
 targets:
-  AgentHubApp:
+  HermesDeskApp:
     type: application
     platform: macOS
     deploymentTarget: "14.0"
     sources:
-      - path: apps/mac/AgentHubApp
+      - path: apps/mac/HermesDeskApp
     info:
-      path: apps/mac/AgentHubApp/SupportingFiles/Info.plist
+      path: apps/mac/HermesDeskApp/SupportingFiles/Info.plist
       properties:
-        CFBundleDisplayName: Agent Hub
-        CFBundleIdentifier: io.nous.agent-hub
+        CFBundleDisplayName: Hermes Desk
+        CFBundleIdentifier: io.nous.hermesdesk
         CFBundleShortVersionString: 0.1.0
-        CFBundleVersion: 1
+        CFBundleVersion: "1"
         LSApplicationCategoryType: public.app-category.developer-tools
         LSUIElement: true
         NSHumanReadableCopyright: Copyright © 2026 Nous Research
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: io.nous.agent-hub
-        PRODUCT_NAME: Agent Hub
+        PRODUCT_BUNDLE_IDENTIFIER: io.nous.hermesdesk
+        PRODUCT_NAME: Hermes Desk
+        PRODUCT_MODULE_NAME: HermesDesk
         GENERATE_INFOPLIST_FILE: NO
         SWIFT_EMIT_LOC_STRINGS: NO
     dependencies:
@@ -39,9 +40,29 @@ targets:
         product: AppCore
       - package: HermesKit
         product: HermesKit
+  HermesDeskAppTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: apps/mac/HermesDeskAppTests
+    dependencies:
+      - target: HermesDeskApp
+      - package: AppCore
+        product: AppCore
+      - package: HermesKit
+        product: HermesKit
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Hermes Desk.app/Contents/MacOS/Hermes Desk"
+        BUNDLE_LOADER: "$(TEST_HOST)"
 
 schemes:
-  AgentHubApp:
+  HermesDeskApp:
     build:
       targets:
-        AgentHubApp: all
+        HermesDeskApp: all
+    test:
+      targets:
+        - name: HermesDeskAppTests

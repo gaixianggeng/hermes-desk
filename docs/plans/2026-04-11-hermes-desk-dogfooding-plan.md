@@ -1,7 +1,7 @@
-# Agent Hub 3~7 天自用验证方案（Mac-first）
+# Hermes Desk 3~7 天自用验证方案（Mac-first）
 
-> **目标**：验证 Agent Hub Phase 0 / 1 是否真的比直接盯 Hermes CLI 更好用  
-> **适用范围**：只针对 Mac 原生 Agent Hub + Hermes 单 Adapter
+> **目标**：验证 Hermes Desk Phase 0 / 1 是否真的比直接盯 Hermes CLI 更好用  
+> **适用范围**：只针对 Mac 原生 Hermes Desk + Hermes 单 Adapter
 
 ---
 
@@ -57,7 +57,7 @@ dogfooding 时严格避免两个误区：
 ### 4.1 今日使用概览
 - 今日总任务数：
 - 其中真实任务数：
-- 通过 Agent Hub 完成监督的任务数：
+- 通过 Hermes Desk 完成监督的任务数：
 - 仍频繁回到 CLI 的任务数：
 
 ### 4.2 关键事件记录

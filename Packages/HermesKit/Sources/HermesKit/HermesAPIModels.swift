@@ -25,33 +25,76 @@ public struct HermesEndpoint: Codable, Equatable, Sendable {
 public struct HermesLocalServerConfiguration: Equatable, Sendable {
     public var endpoint: HermesEndpoint
     public var apiKey: String?
+    public var hermesHomePath: String
+    public var environmentFilePath: String
+    public var environmentFileExists: Bool
 
-    public init(endpoint: HermesEndpoint = .defaultLocal, apiKey: String? = nil) {
+    public init(
+        endpoint: HermesEndpoint = .defaultLocal,
+        apiKey: String? = nil,
+        hermesHomePath: String? = nil,
+        environmentFilePath: String? = nil,
+        environmentFileExists: Bool = false
+    ) {
+        let resolvedHermesHome = hermesHomePath?.nilIfBlank
+            ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+                .appending(path: ".hermes", directoryHint: .isDirectory)
+                .path
         self.endpoint = endpoint
         self.apiKey = apiKey?.nilIfBlank
+        self.hermesHomePath = resolvedHermesHome
+        self.environmentFilePath = environmentFilePath?.nilIfBlank
+            ?? URL(fileURLWithPath: resolvedHermesHome, isDirectory: true)
+                .appending(path: ".env")
+                .path
+        self.environmentFileExists = environmentFileExists
     }
 
-    public static func discover() -> HermesLocalServerConfiguration {
-        let environment = HermesEnvironmentFile.loadDefault()
-        let processEnvironment = ProcessInfo.processInfo.environment
+    public static func discover(
+        processEnvironment: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default,
+        homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+    ) -> HermesLocalServerConfiguration {
+        let defaultHermesHomePath = homeDirectory
+            .appending(path: ".hermes", directoryHint: .isDirectory)
+            .path
+        let hermesHomePath = processEnvironment["HERMES_HOME"]?.nilIfBlank
+            ?? defaultHermesHomePath
+        let environment = HermesEnvironmentFile.load(
+            hermesHomePath: hermesHomePath,
+            fileManager: fileManager
+        )
+        let sharedEnvironment = hermesHomePath == defaultHermesHomePath
+            ? environment
+            : HermesEnvironmentFile.load(
+                hermesHomePath: defaultHermesHomePath,
+                fileManager: fileManager
+            )
 
         let scheme = processEnvironment["API_SERVER_SCHEME"]
             ?? environment["API_SERVER_SCHEME"]
+            ?? sharedEnvironment["API_SERVER_SCHEME"]
             ?? HermesEndpoint.defaultLocal.scheme
         let host = processEnvironment["API_SERVER_HOST"]
             ?? environment["API_SERVER_HOST"]
+            ?? sharedEnvironment["API_SERVER_HOST"]
             ?? HermesEndpoint.defaultLocal.host
         let port = Int(
             processEnvironment["API_SERVER_PORT"]
                 ?? environment["API_SERVER_PORT"]
+                ?? sharedEnvironment["API_SERVER_PORT"]
                 ?? String(HermesEndpoint.defaultLocal.port)
         ) ?? HermesEndpoint.defaultLocal.port
         let apiKey = processEnvironment["API_SERVER_KEY"]
             ?? environment["API_SERVER_KEY"]
+            ?? sharedEnvironment["API_SERVER_KEY"]
 
         return HermesLocalServerConfiguration(
             endpoint: HermesEndpoint(scheme: scheme, host: host, port: port),
-            apiKey: apiKey
+            apiKey: apiKey,
+            hermesHomePath: hermesHomePath,
+            environmentFilePath: environment.filePath,
+            environmentFileExists: environment.exists
         )
     }
 }
@@ -147,11 +190,37 @@ public struct HermesRunRequest: Equatable, Sendable {
     public var input: String
     public var sessionID: String?
     public var instructions: String?
+    public var conversationHistory: [HermesConversationHistoryMessage]?
 
-    public init(input: String, sessionID: String? = nil, instructions: String? = nil) {
+    public init(
+        input: String,
+        sessionID: String? = nil,
+        instructions: String? = nil,
+        conversationHistory: [HermesConversationHistoryMessage]? = nil
+    ) {
         self.input = input
         self.sessionID = sessionID?.nilIfBlank
         self.instructions = instructions?.nilIfBlank
+        self.conversationHistory = conversationHistory?.isEmpty == false ? conversationHistory : nil
+    }
+
+    public init(input: String, sessionID: String? = nil, instructions: String? = nil) {
+        self.init(
+            input: input,
+            sessionID: sessionID,
+            instructions: instructions,
+            conversationHistory: nil
+        )
+    }
+}
+
+public struct HermesConversationHistoryMessage: Codable, Equatable, Sendable {
+    public var role: String
+    public var content: String
+
+    public init(role: String, content: String) {
+        self.role = role
+        self.content = content
     }
 }
 
@@ -188,11 +257,60 @@ public struct HermesRunUsage: Codable, Equatable, Sendable {
     }
 }
 
+public enum HermesRunAction: String, Codable, Equatable, Sendable, CaseIterable {
+    case approveOnce = "approve_once"
+    case approveForTask = "approve_for_task"
+    case reject
+    case retry
+    case stop
+}
+
+public struct HermesRunActionRequest: Encodable, Equatable, Sendable {
+    public var action: HermesRunAction
+    public var approvalID: String?
+
+    public init(action: HermesRunAction, approvalID: String? = nil) {
+        self.action = action
+        self.approvalID = approvalID?.nilIfBlank
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case action
+        case approvalID = "approval_id"
+    }
+}
+
+public struct HermesRunActionResponse: Codable, Equatable, Sendable {
+    public var runID: String
+    public var status: String
+    public var approvalID: String?
+    public var decision: String?
+
+    public init(runID: String, status: String, approvalID: String? = nil, decision: String? = nil) {
+        self.runID = runID
+        self.status = status
+        self.approvalID = approvalID?.nilIfBlank
+        self.decision = decision?.nilIfBlank
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case runID = "run_id"
+        case status
+        case approvalID = "approval_id"
+        case decision
+    }
+}
+
 public enum HermesRunEventType: String, Codable, Equatable, Sendable, CaseIterable {
     case toolStarted = "tool.started"
     case toolCompleted = "tool.completed"
     case reasoningAvailable = "reasoning.available"
     case messageDelta = "message.delta"
+    case approvalRequested = "approval.requested"
+    case approvalResolved = "approval.resolved"
+    case observationReconnecting = "observation.reconnecting"
+    case observationDisconnected = "observation.disconnected"
+    case runInterrupted = "run.interrupted"
     case runCompleted = "run.completed"
     case runFailed = "run.failed"
 }
@@ -210,6 +328,12 @@ public struct HermesRunEvent: Codable, Equatable, Sendable, Identifiable {
     public var isToolError: Bool
     public var failureMessage: String?
     public var usage: HermesRunUsage?
+    public var approvalID: String?
+    public var command: String?
+    public var eventDescription: String?
+    public var allowPermanent: Bool?
+    public var decision: String?
+    public var message: String?
 
     public init(
         type: HermesRunEventType,
@@ -223,7 +347,13 @@ public struct HermesRunEvent: Codable, Equatable, Sendable, Identifiable {
         duration: TimeInterval? = nil,
         isToolError: Bool = false,
         failureMessage: String? = nil,
-        usage: HermesRunUsage? = nil
+        usage: HermesRunUsage? = nil,
+        approvalID: String? = nil,
+        command: String? = nil,
+        eventDescription: String? = nil,
+        allowPermanent: Bool? = nil,
+        decision: String? = nil,
+        message: String? = nil
     ) {
         self.type = type
         self.runID = runID
@@ -237,6 +367,12 @@ public struct HermesRunEvent: Codable, Equatable, Sendable, Identifiable {
         self.isToolError = isToolError
         self.failureMessage = failureMessage?.nilIfBlank
         self.usage = usage
+        self.approvalID = approvalID?.nilIfBlank
+        self.command = command?.nilIfBlank
+        self.eventDescription = eventDescription?.nilIfBlank
+        self.allowPermanent = allowPermanent
+        self.decision = decision?.nilIfBlank
+        self.message = message?.nilIfBlank
     }
 
     public var id: String {
@@ -253,6 +389,16 @@ public struct HermesRunEvent: Codable, Equatable, Sendable, Identifiable {
             return "Reasoning updated"
         case .messageDelta:
             return "Streaming output"
+        case .approvalRequested:
+            return "Approval requested"
+        case .approvalResolved:
+            return decision == "deny" ? "Approval rejected" : "Approval granted"
+        case .observationReconnecting:
+            return "Reconnecting live feed"
+        case .observationDisconnected:
+            return "Live feed disconnected"
+        case .runInterrupted:
+            return "Run interrupted"
         case .runCompleted:
             return "Run completed"
         case .runFailed:
@@ -273,6 +419,14 @@ public struct HermesRunEvent: Codable, Equatable, Sendable, Identifiable {
             return reasoning
         case .messageDelta:
             return delta
+        case .approvalRequested:
+            return [eventDescription, command].compactMap { $0 }.joined(separator: "\n")
+        case .approvalResolved:
+            return decision
+        case .observationReconnecting, .observationDisconnected:
+            return message
+        case .runInterrupted:
+            return message
         case .runCompleted:
             return output
         case .runFailed:
@@ -288,7 +442,7 @@ public struct HermesRunEvent: Codable, Equatable, Sendable, Identifiable {
             return reasoning
         case .runCompleted:
             return output
-        case .toolStarted, .toolCompleted, .runFailed:
+        case .toolStarted, .toolCompleted, .approvalRequested, .approvalResolved, .observationReconnecting, .observationDisconnected, .runInterrupted, .runFailed:
             return nil
         }
     }
@@ -305,6 +459,12 @@ public struct HermesRunEvent: Codable, Equatable, Sendable, Identifiable {
         case duration
         case error
         case usage
+        case approvalID = "approval_id"
+        case command
+        case eventDescription = "description"
+        case allowPermanent = "allow_permanent"
+        case decision
+        case message
     }
 
     public init(from decoder: Decoder) throws {
@@ -319,6 +479,12 @@ public struct HermesRunEvent: Codable, Equatable, Sendable, Identifiable {
         output = try container.decodeIfPresent(String.self, forKey: .output)?.nilIfBlank
         duration = try container.decodeIfPresent(Double.self, forKey: .duration)
         usage = try container.decodeIfPresent(HermesRunUsage.self, forKey: .usage)
+        approvalID = try container.decodeIfPresent(String.self, forKey: .approvalID)?.nilIfBlank
+        command = try container.decodeIfPresent(String.self, forKey: .command)?.nilIfBlank
+        eventDescription = try container.decodeIfPresent(String.self, forKey: .eventDescription)?.nilIfBlank
+        allowPermanent = try container.decodeIfPresent(Bool.self, forKey: .allowPermanent)
+        decision = try container.decodeIfPresent(String.self, forKey: .decision)?.nilIfBlank
+        message = try container.decodeIfPresent(String.self, forKey: .message)?.nilIfBlank
 
         if let boolError = try container.decodeIfPresent(Bool.self, forKey: .error) {
             isToolError = boolError
@@ -343,6 +509,12 @@ public struct HermesRunEvent: Codable, Equatable, Sendable, Identifiable {
         try container.encodeIfPresent(delta, forKey: .delta)
         try container.encodeIfPresent(output, forKey: .output)
         try container.encodeIfPresent(duration, forKey: .duration)
+        try container.encodeIfPresent(approvalID, forKey: .approvalID)
+        try container.encodeIfPresent(command, forKey: .command)
+        try container.encodeIfPresent(eventDescription, forKey: .eventDescription)
+        try container.encodeIfPresent(allowPermanent, forKey: .allowPermanent)
+        try container.encodeIfPresent(decision, forKey: .decision)
+        try container.encodeIfPresent(message, forKey: .message)
         switch type {
         case .toolCompleted:
             try container.encode(isToolError, forKey: .error)
@@ -371,8 +543,267 @@ public struct HermesRunEvent: Codable, Equatable, Sendable, Identifiable {
         throw DecodingError.dataCorruptedError(
             forKey: .timestamp,
             in: container,
-            debugDescription: "Hermes run event is missing a valid timestamp."
+            debugDescription: "Expected unix timestamp as Double, Int, or String"
         )
+    }
+}
+
+public enum HermesConversationRole: String, Codable, Equatable, Sendable, CaseIterable {
+    case user
+    case assistant
+    case tool
+    case system
+    case sessionMeta = "session_meta"
+    case unknown
+
+    public init(rawRole: String) {
+        self = HermesConversationRole(rawValue: rawRole) ?? .unknown
+    }
+
+    public var isVisibleInWorkspace: Bool {
+        switch self {
+        case .sessionMeta:
+            return false
+        case .user, .assistant, .tool, .system, .unknown:
+            return true
+        }
+    }
+}
+
+public enum HermesWorkspaceContentClassification: String, Codable, Equatable, Sendable {
+    case conversation
+    case progress
+    case empty
+}
+
+public enum HermesWorkspaceTranscriptMode: String, Codable, Equatable, Sendable, CaseIterable {
+    case conversation
+    case full
+}
+
+public struct HermesConversationMessage: Codable, Equatable, Sendable, Identifiable {
+    public var id: Int64
+    public var sessionID: String
+    public var role: HermesConversationRole
+    public var content: String
+    public var toolName: String?
+    public var reasoning: String?
+    public var timestamp: Date
+
+    public init(
+        id: Int64,
+        sessionID: String,
+        role: HermesConversationRole,
+        content: String,
+        toolName: String? = nil,
+        reasoning: String? = nil,
+        timestamp: Date
+    ) {
+        self.id = id
+        self.sessionID = sessionID
+        self.role = role
+        self.content = content
+        self.toolName = toolName?.nilIfBlank
+        self.reasoning = reasoning?.nilIfBlank
+        self.timestamp = timestamp
+    }
+
+    public var displayText: String {
+        let trimmedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedContent.isEmpty == false {
+            return trimmedContent
+        }
+        if let reasoning, reasoning.isEmpty == false {
+            return reasoning
+        }
+        return ""
+    }
+
+    public var workspaceClassification: HermesWorkspaceContentClassification {
+        HermesWorkspaceContentClassifier.classify(displayText)
+    }
+
+    public var isSyntheticControlMessage: Bool {
+        HermesWorkspaceContentClassifier.looksLikeSyntheticControlMessage(displayText)
+    }
+
+    public func shouldDisplayInWorkspace(mode: HermesWorkspaceTranscriptMode) -> Bool {
+        guard displayText.isEmpty == false else {
+            return false
+        }
+
+        switch mode {
+        case .conversation:
+            switch role {
+            case .user:
+                return isSyntheticControlMessage == false
+            case .assistant:
+                return workspaceClassification == .conversation
+            case .tool, .sessionMeta, .system, .unknown:
+                return false
+            }
+        case .full:
+            return true
+        }
+    }
+
+    public var shouldDisplayInWorkspaceConversation: Bool {
+        shouldDisplayInWorkspace(mode: .conversation)
+    }
+
+    public var shouldRouteToTaskProgress: Bool {
+        guard displayText.isEmpty == false else {
+            return false
+        }
+
+        switch role {
+        case .user:
+            return isSyntheticControlMessage
+        case .assistant:
+            return workspaceClassification == .progress
+        case .tool, .sessionMeta, .system, .unknown:
+            return true
+        }
+    }
+}
+
+public struct HermesConversationPageCursor: Codable, Equatable, Sendable {
+    public var id: Int64
+    public var timestamp: Date
+
+    public init(id: Int64, timestamp: Date) {
+        self.id = id
+        self.timestamp = timestamp
+    }
+}
+
+public struct HermesConversationPage: Codable, Equatable, Sendable {
+    public var messages: [HermesConversationMessage]
+    public var hasMoreBefore: Bool
+
+    public init(messages: [HermesConversationMessage], hasMoreBefore: Bool) {
+        self.messages = messages
+        self.hasMoreBefore = hasMoreBefore
+    }
+}
+
+public enum HermesWorkspaceContentClassifier {
+    public static func classify(_ text: String) -> HermesWorkspaceContentClassification {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            return .empty
+        }
+
+        if looksLikeSyntheticControlMessage(trimmed) {
+            return .progress
+        }
+
+        let lines = trimmed
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.isEmpty == false }
+        guard lines.isEmpty == false else {
+            return .empty
+        }
+
+        let progressPrefixPattern = #"^[^A-Za-z0-9]*(skill_view|todo|terminal|delegate_task|browser_[a-z_]+|read_file|search_files|write_file|patch|execute_code|process|clarify|cronjob|tool_[a-z_]+)\s*:\s*"#
+        let progressSentencePattern = #"^(Started tool|Completed tool|Running tool|Tool reported an error|Streaming output)\b"#
+        let reasoningSignalPattern = #"(I(?:'m| am)\s+(?:noticing|thinking|considering|wondering)|I\s+(?:might|could|should|want to|need to)\b|This could suggest|I want to make sure|I'm not sure it's necessary)"#
+        let machineStatusPattern = #"(?:\b(?:reportId|created|status|phase|payload|headers?)\s*:|HTTP/\d\.\d|\bPOST\s+http|\bGET\s+http|/tmp/|https?://|^#{2,}\s*(?:当前阶段|当前状态|任务进度|执行摘要|progress|status|phase)\b|^\s*(?:[-*]\s+)?\*\*(?:阶段|状态|进度|摘要|Phase|Status|Progress|Summary)\*\*\s*:)"#
+
+        let matchingLines = lines.filter { line in
+            line.range(of: progressPrefixPattern, options: [.regularExpression, .caseInsensitive]) != nil
+                || line.range(of: progressSentencePattern, options: [.regularExpression, .caseInsensitive]) != nil
+        }
+
+        if matchingLines.count >= max(1, lines.count - 1) {
+            return .progress
+        }
+
+        let reasoningSignalCount: Int
+        if let expression = try? NSRegularExpression(pattern: reasoningSignalPattern, options: [.caseInsensitive]) {
+            let range = NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed)
+            reasoningSignalCount = expression.numberOfMatches(in: trimmed, options: [], range: range)
+        } else {
+            reasoningSignalCount = 0
+        }
+
+        if reasoningSignalCount >= 2 {
+            return .progress
+        }
+
+        let machineStatusSignalCount: Int
+        if let expression = try? NSRegularExpression(pattern: machineStatusPattern, options: [.caseInsensitive, .anchorsMatchLines]) {
+            let range = NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed)
+            machineStatusSignalCount = expression.numberOfMatches(in: trimmed, options: [], range: range)
+        } else {
+            machineStatusSignalCount = 0
+        }
+
+        if machineStatusSignalCount >= 3 {
+            return .progress
+        }
+
+        return .conversation
+    }
+
+    public static func looksLikeProgressLog(_ text: String) -> Bool {
+        classify(text) == .progress
+    }
+
+    public static func looksLikeSyntheticControlMessage(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            return false
+        }
+
+        let controlPatterns = [
+            #"You've reached the maximum number of tool-calling iterations allowed"#,
+            #"Please provide a final response summarizing what you've found and accomplished so far"#,
+            #"^\[System note:"#,
+        ]
+
+        return controlPatterns.contains { pattern in
+            trimmed.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+        }
+    }
+}
+
+public struct HermesSessionDescriptor: Codable, Equatable, Sendable, Identifiable {
+    public var id: String { sessionID }
+    public var sessionID: String
+    public var parentSessionID: String?
+    public var title: String?
+    public var source: String?
+    public var startedAt: Date?
+    public var endedAt: Date?
+
+    public init(
+        sessionID: String,
+        parentSessionID: String? = nil,
+        title: String? = nil,
+        source: String? = nil,
+        startedAt: Date? = nil,
+        endedAt: Date? = nil
+    ) {
+        self.sessionID = sessionID
+        self.parentSessionID = parentSessionID?.nilIfBlank
+        self.title = title?.nilIfBlank
+        self.source = source?.nilIfBlank
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+    }
+}
+
+public struct HermesSessionBinding: Codable, Equatable, Sendable {
+    public var rootSessionID: String
+    public var currentSessionID: String
+    public var lineage: [HermesSessionDescriptor]
+
+    public init(rootSessionID: String, currentSessionID: String, lineage: [HermesSessionDescriptor]) {
+        self.rootSessionID = rootSessionID
+        self.currentSessionID = currentSessionID
+        self.lineage = lineage
     }
 }
 
@@ -404,20 +835,23 @@ public enum HermesRunClientError: Error, LocalizedError, Equatable, Sendable {
 
 private struct HermesEnvironmentFile {
     private let values: [String: String]
+    let filePath: String
+    let exists: Bool
 
     subscript(key: String) -> String? {
         values[key]?.nilIfBlank
     }
 
-    static func loadDefault(fileManager: FileManager = .default) -> HermesEnvironmentFile {
-        let homeDirectory = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
-        let candidate = homeDirectory
-            .appending(path: ".hermes", directoryHint: .isDirectory)
+    static func load(
+        hermesHomePath: String,
+        fileManager: FileManager = .default
+    ) -> HermesEnvironmentFile {
+        let candidate = URL(fileURLWithPath: hermesHomePath, isDirectory: true)
             .appending(path: ".env")
 
         guard fileManager.fileExists(atPath: candidate.path),
               let contents = try? String(contentsOf: candidate, encoding: .utf8) else {
-            return HermesEnvironmentFile(values: [:])
+            return HermesEnvironmentFile(values: [:], filePath: candidate.path, exists: false)
         }
 
         var values: [String: String] = [:]
@@ -437,7 +871,7 @@ private struct HermesEnvironmentFile {
             values[key] = value
         }
 
-        return HermesEnvironmentFile(values: values)
+        return HermesEnvironmentFile(values: values, filePath: candidate.path, exists: true)
     }
 }
 
@@ -450,4 +884,5 @@ private extension String {
     var nilIfEmptyPreservingWhitespace: String? {
         isEmpty ? nil : self
     }
+
 }

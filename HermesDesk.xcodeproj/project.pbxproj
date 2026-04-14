@@ -1,0 +1,564 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0170BF254048A0170ECEDF5A /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B91777F9FB259E3F8B6BE294 /* DiagnosticsView.swift */; };
+		02F355D40BC55A0DFA4A66C4 /* FailurePanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B3DAD50AEEAA603691E358C /* FailurePanelView.swift */; };
+		04F916721FBDD3208F7B60FA /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 172C610A080927C2A2661C11 /* AppDelegate.swift */; };
+		0F4726E6DAD2CB321DA0C66F /* AppCore in Frameworks */ = {isa = PBXBuildFile; productRef = 41D86D013EC63BE8CAFF503C /* AppCore */; };
+		2A04B8612D81B79DC2963237 /* HermesKit in Frameworks */ = {isa = PBXBuildFile; productRef = 7717B7724235DBFBAABD9289 /* HermesKit */; };
+		3DBD95F9290FB0DDDFFBA0F0 /* MenuBarScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = E240C4E1FA1394ACBAF6BE56 /* MenuBarScene.swift */; };
+		72E4D9251BCF6BC3C7E0DAEB /* AppStateStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C926B42303BE737D253E2C10 /* AppStateStoreTests.swift */; };
+		9FDC39B56AB2E833682B009B /* AppStateStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB7B1F86BFD6BB2140C201CC /* AppStateStore.swift */; };
+		B11CCF6140631302C8D8A0C0 /* WorkspaceTaskListRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9799812227587F62D3F08178 /* WorkspaceTaskListRowView.swift */; };
+		C0A611C51034555977240B9A /* ConfirmationCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60FCB992EECA2088C31D4148 /* ConfirmationCardView.swift */; };
+		CCC6A8E3CF3304E3ED0FA4FE /* HermesDeskApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DB7E3045D5D9D2E6F9FB0E0 /* HermesDeskApp.swift */; };
+		DDDDCBC21D29E88051AD7ED8 /* AppCore in Frameworks */ = {isa = PBXBuildFile; productRef = FB6CD2C43D598C083E5FBDFF /* AppCore */; };
+		DEB980CDB7D1212AEB894B8C /* WindowRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B39786DF126F31FE7796E2D0 /* WindowRouter.swift */; };
+		E7880E1ECED9835860D0D1FE /* HermesKit in Frameworks */ = {isa = PBXBuildFile; productRef = C3BDADF57325827C6007D354 /* HermesKit */; };
+		F2BE07D10E0299B7272D53D5 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E53B46F590840D053A6A0195 /* DashboardView.swift */; };
+		F62361FBD47D95ACE8A3745F /* SettingsScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87254EE44A0158B3F4B43BA2 /* SettingsScene.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		2A4ED82DBA1FC3AB726029F0 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 77F8872B8650F44DB20EE8FB /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A724690CDEB9D75B769D7DEA;
+			remoteInfo = HermesDeskApp;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0B97EE43A0701E6E67644602 /* HermesDeskApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HermesDeskApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0DB7E3045D5D9D2E6F9FB0E0 /* HermesDeskApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HermesDeskApp.swift; sourceTree = "<group>"; };
+		172C610A080927C2A2661C11 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		3B3DAD50AEEAA603691E358C /* FailurePanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FailurePanelView.swift; sourceTree = "<group>"; };
+		60FCB992EECA2088C31D4148 /* ConfirmationCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmationCardView.swift; sourceTree = "<group>"; };
+		852B980AD1A8B1079D053894 /* AppCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AppCore; path = Packages/AppCore; sourceTree = SOURCE_ROOT; };
+		87254EE44A0158B3F4B43BA2 /* SettingsScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsScene.swift; sourceTree = "<group>"; };
+		87D7670620CEAA499F710408 /* HermesDeskAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HermesDeskAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		9799812227587F62D3F08178 /* WorkspaceTaskListRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTaskListRowView.swift; sourceTree = "<group>"; };
+		97C487A4FF69E202F78B8B70 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		B39786DF126F31FE7796E2D0 /* WindowRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowRouter.swift; sourceTree = "<group>"; };
+		B91777F9FB259E3F8B6BE294 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
+		C926B42303BE737D253E2C10 /* AppStateStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStateStoreTests.swift; sourceTree = "<group>"; };
+		D5315A84DCDB5FD77CF00799 /* HermesKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = HermesKit; path = Packages/HermesKit; sourceTree = SOURCE_ROOT; };
+		DB7B1F86BFD6BB2140C201CC /* AppStateStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStateStore.swift; sourceTree = "<group>"; };
+		E240C4E1FA1394ACBAF6BE56 /* MenuBarScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarScene.swift; sourceTree = "<group>"; };
+		E53B46F590840D053A6A0195 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		350C6373BACADD12B479681C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0F4726E6DAD2CB321DA0C66F /* AppCore in Frameworks */,
+				E7880E1ECED9835860D0D1FE /* HermesKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C0CCA45DB79DDD6FD8B4AFD4 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DDDDCBC21D29E88051AD7ED8 /* AppCore in Frameworks */,
+				2A04B8612D81B79DC2963237 /* HermesKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0E14AF58E2BD9C3F70A6FF6B /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				61F9A1087BFEEA50360A21D4 /* Confirm */,
+				561F635B9F04BA367D1C89F8 /* Dashboard */,
+				3226A77FDE742E4015D2574F /* Diagnostics */,
+				F95892EC06158D63F855E469 /* TaskDetail */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		1D4E5269FB5AF3AA70D5124A /* HermesDeskApp */ = {
+			isa = PBXGroup;
+			children = (
+				66F895EEC172F287667EF1A6 /* AppShell */,
+				0E14AF58E2BD9C3F70A6FF6B /* Features */,
+				DC49A2AAAE2E47C5130D6C8C /* SupportingFiles */,
+				0DB7E3045D5D9D2E6F9FB0E0 /* HermesDeskApp.swift */,
+			);
+			name = HermesDeskApp;
+			path = apps/mac/HermesDeskApp;
+			sourceTree = "<group>";
+		};
+		3226A77FDE742E4015D2574F /* Diagnostics */ = {
+			isa = PBXGroup;
+			children = (
+				B91777F9FB259E3F8B6BE294 /* DiagnosticsView.swift */,
+			);
+			path = Diagnostics;
+			sourceTree = "<group>";
+		};
+		561F635B9F04BA367D1C89F8 /* Dashboard */ = {
+			isa = PBXGroup;
+			children = (
+				E53B46F590840D053A6A0195 /* DashboardView.swift */,
+				9799812227587F62D3F08178 /* WorkspaceTaskListRowView.swift */,
+			);
+			path = Dashboard;
+			sourceTree = "<group>";
+		};
+		61F9A1087BFEEA50360A21D4 /* Confirm */ = {
+			isa = PBXGroup;
+			children = (
+				60FCB992EECA2088C31D4148 /* ConfirmationCardView.swift */,
+			);
+			path = Confirm;
+			sourceTree = "<group>";
+		};
+		66F895EEC172F287667EF1A6 /* AppShell */ = {
+			isa = PBXGroup;
+			children = (
+				172C610A080927C2A2661C11 /* AppDelegate.swift */,
+				DB7B1F86BFD6BB2140C201CC /* AppStateStore.swift */,
+				E240C4E1FA1394ACBAF6BE56 /* MenuBarScene.swift */,
+				87254EE44A0158B3F4B43BA2 /* SettingsScene.swift */,
+				B39786DF126F31FE7796E2D0 /* WindowRouter.swift */,
+			);
+			path = AppShell;
+			sourceTree = "<group>";
+		};
+		69A531D740193FC7D2829C81 = {
+			isa = PBXGroup;
+			children = (
+				1D4E5269FB5AF3AA70D5124A /* HermesDeskApp */,
+				757CF74AF0584B2D605E2B82 /* HermesDeskAppTests */,
+				A26FCEFAF284875F10D1D068 /* Packages */,
+				A3ABA6D527F0BB441AB26B22 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		757CF74AF0584B2D605E2B82 /* HermesDeskAppTests */ = {
+			isa = PBXGroup;
+			children = (
+				C926B42303BE737D253E2C10 /* AppStateStoreTests.swift */,
+			);
+			name = HermesDeskAppTests;
+			path = apps/mac/HermesDeskAppTests;
+			sourceTree = "<group>";
+		};
+		A26FCEFAF284875F10D1D068 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				852B980AD1A8B1079D053894 /* AppCore */,
+				D5315A84DCDB5FD77CF00799 /* HermesKit */,
+			);
+			path = Packages;
+			sourceTree = "<group>";
+		};
+		A3ABA6D527F0BB441AB26B22 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				0B97EE43A0701E6E67644602 /* HermesDeskApp.app */,
+				87D7670620CEAA499F710408 /* HermesDeskAppTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		DC49A2AAAE2E47C5130D6C8C /* SupportingFiles */ = {
+			isa = PBXGroup;
+			children = (
+				97C487A4FF69E202F78B8B70 /* Info.plist */,
+			);
+			path = SupportingFiles;
+			sourceTree = "<group>";
+		};
+		F95892EC06158D63F855E469 /* TaskDetail */ = {
+			isa = PBXGroup;
+			children = (
+				3B3DAD50AEEAA603691E358C /* FailurePanelView.swift */,
+			);
+			path = TaskDetail;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		9733065B55EE7D58DE5904D9 /* HermesDeskAppTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C88074F28DF3DD17ABC81895 /* Build configuration list for PBXNativeTarget "HermesDeskAppTests" */;
+			buildPhases = (
+				C5C52D753CE909E72545A676 /* Sources */,
+				350C6373BACADD12B479681C /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				EDC391EF002932EB8C51C04A /* PBXTargetDependency */,
+			);
+			name = HermesDeskAppTests;
+			packageProductDependencies = (
+				41D86D013EC63BE8CAFF503C /* AppCore */,
+				C3BDADF57325827C6007D354 /* HermesKit */,
+			);
+			productName = HermesDeskAppTests;
+			productReference = 87D7670620CEAA499F710408 /* HermesDeskAppTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		A724690CDEB9D75B769D7DEA /* HermesDeskApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BA9AA93A4EA088DBD7A4C472 /* Build configuration list for PBXNativeTarget "HermesDeskApp" */;
+			buildPhases = (
+				9271E25ED29C612464FBCDD8 /* Sources */,
+				C0CCA45DB79DDD6FD8B4AFD4 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = HermesDeskApp;
+			packageProductDependencies = (
+				FB6CD2C43D598C083E5FBDFF /* AppCore */,
+				7717B7724235DBFBAABD9289 /* HermesKit */,
+			);
+			productName = HermesDeskApp;
+			productReference = 0B97EE43A0701E6E67644602 /* HermesDeskApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		77F8872B8650F44DB20EE8FB /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = 1E301E52BD6876EF2834FC28 /* Build configuration list for PBXProject "HermesDesk" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 69A531D740193FC7D2829C81;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				78E2E5696C540FABEFCE5690 /* XCLocalSwiftPackageReference "Packages/AppCore" */,
+				F0989011B29EF213785FD614 /* XCLocalSwiftPackageReference "Packages/HermesKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = A3ABA6D527F0BB441AB26B22 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A724690CDEB9D75B769D7DEA /* HermesDeskApp */,
+				9733065B55EE7D58DE5904D9 /* HermesDeskAppTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		9271E25ED29C612464FBCDD8 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				04F916721FBDD3208F7B60FA /* AppDelegate.swift in Sources */,
+				9FDC39B56AB2E833682B009B /* AppStateStore.swift in Sources */,
+				C0A611C51034555977240B9A /* ConfirmationCardView.swift in Sources */,
+				F2BE07D10E0299B7272D53D5 /* DashboardView.swift in Sources */,
+				0170BF254048A0170ECEDF5A /* DiagnosticsView.swift in Sources */,
+				02F355D40BC55A0DFA4A66C4 /* FailurePanelView.swift in Sources */,
+				CCC6A8E3CF3304E3ED0FA4FE /* HermesDeskApp.swift in Sources */,
+				3DBD95F9290FB0DDDFFBA0F0 /* MenuBarScene.swift in Sources */,
+				F62361FBD47D95ACE8A3745F /* SettingsScene.swift in Sources */,
+				DEB980CDB7D1212AEB894B8C /* WindowRouter.swift in Sources */,
+				B11CCF6140631302C8D8A0C0 /* WorkspaceTaskListRowView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C5C52D753CE909E72545A676 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				72E4D9251BCF6BC3C7E0DAEB /* AppStateStoreTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		EDC391EF002932EB8C51C04A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A724690CDEB9D75B769D7DEA /* HermesDeskApp */;
+			targetProxy = 2A4ED82DBA1FC3AB726029F0 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0C91B91F0D1EA23C3677510B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Hermes Desk.app/Contents/MacOS/Hermes Desk";
+			};
+			name = Debug;
+		};
+		5248B72550D5AEEF7F5784B6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		986B52078AF4F65B0C3D5D92 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Hermes Desk.app/Contents/MacOS/Hermes Desk";
+			};
+			name = Release;
+		};
+		A271AEB11589C56D81734065 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		CA1723CBC822A2248BB56AF3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = apps/mac/HermesDeskApp/SupportingFiles/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.nous.hermesdesk;
+				PRODUCT_MODULE_NAME = HermesDesk;
+				PRODUCT_NAME = "Hermes Desk";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+			};
+			name = Debug;
+		};
+		DA82A24414FDBAE53B372847 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = apps/mac/HermesDeskApp/SupportingFiles/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.nous.hermesdesk;
+				PRODUCT_MODULE_NAME = HermesDesk;
+				PRODUCT_NAME = "Hermes Desk";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1E301E52BD6876EF2834FC28 /* Build configuration list for PBXProject "HermesDesk" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A271AEB11589C56D81734065 /* Debug */,
+				5248B72550D5AEEF7F5784B6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		BA9AA93A4EA088DBD7A4C472 /* Build configuration list for PBXNativeTarget "HermesDeskApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CA1723CBC822A2248BB56AF3 /* Debug */,
+				DA82A24414FDBAE53B372847 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		C88074F28DF3DD17ABC81895 /* Build configuration list for PBXNativeTarget "HermesDeskAppTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0C91B91F0D1EA23C3677510B /* Debug */,
+				986B52078AF4F65B0C3D5D92 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		78E2E5696C540FABEFCE5690 /* XCLocalSwiftPackageReference "Packages/AppCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/AppCore;
+		};
+		F0989011B29EF213785FD614 /* XCLocalSwiftPackageReference "Packages/HermesKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/HermesKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		41D86D013EC63BE8CAFF503C /* AppCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AppCore;
+		};
+		7717B7724235DBFBAABD9289 /* HermesKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = HermesKit;
+		};
+		C3BDADF57325827C6007D354 /* HermesKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = HermesKit;
+		};
+		FB6CD2C43D598C083E5FBDFF /* AppCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AppCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 77F8872B8650F44DB20EE8FB /* Project object */;
+}

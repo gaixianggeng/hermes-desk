@@ -1,8 +1,8 @@
-# Agent Hub Phase 0 / Phase 1 实施计划（Mac 原生 + Hermes Adapter）
+# Hermes Desk Phase 0 / Phase 1 实施计划（Mac 原生 + Hermes Adapter）
 
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 
-**Goal:** 以 Mac 原生方式完成 Agent Hub 的 Phase 0 / Phase 1：先做一个程序员愿意长期使用的 MenuBar 监督控制面，只接 Hermes，一个阶段一个闭环。
+**Goal:** 以 Mac 原生方式完成 Hermes Desk 的 Phase 0 / Phase 1：先做一个程序员愿意长期使用的 MenuBar 监督控制面，只接 Hermes，一个阶段一个闭环。
 
 **Architecture:** 客户端使用 SwiftUI + MenuBarExtra + 少量 AppKit 桥接；本机通过 Hermes 现有 API Server（127.0.0.1 HTTP + SSE）通信；服务生命周期优先复用 Hermes 现有 launchd 能力，不额外重做守护进程系统。
 
@@ -30,10 +30,10 @@
 建议新建独立仓库（便于将来继续做 iPhone 端复用），推荐结构：
 
 ```text
-agent-hub/
+hermes-desk/
 ├── apps/
-│   └── mac/AgentHubApp/
-│       ├── AgentHubApp.swift
+│   └── mac/HermesDeskApp/
+│       ├── HermesDeskApp.swift
 │       ├── AppShell/
 │       ├── Features/
 │       ├── Resources/
@@ -66,10 +66,10 @@ agent-hub/
 **职责**：App 生命周期、MenuBar、窗口管理、Settings 入口
 
 **建议文件**：
-- `apps/mac/AgentHubApp/AgentHubApp.swift`
-- `apps/mac/AgentHubApp/AppShell/MenuBarScene.swift`
-- `apps/mac/AgentHubApp/AppShell/WindowRouter.swift`
-- `apps/mac/AgentHubApp/AppShell/SettingsScene.swift`
+- `apps/mac/HermesDeskApp/HermesDeskApp.swift`
+- `apps/mac/HermesDeskApp/AppShell/MenuBarScene.swift`
+- `apps/mac/HermesDeskApp/AppShell/WindowRouter.swift`
+- `apps/mac/HermesDeskApp/AppShell/SettingsScene.swift`
 
 ## 2.2 Feature：Inbox / Task Detail / Confirm / Diagnostics
 **职责**：核心页面和交互逻辑
@@ -149,8 +149,8 @@ agent-hub/
 **Objective:** 创建 Mac 原生项目骨架、共享包和基础模块命名。
 
 **Files:**
-- Create: `apps/mac/AgentHubApp/AgentHubApp.swift`
-- Create: `apps/mac/AgentHubApp/AppShell/MenuBarScene.swift`
+- Create: `apps/mac/HermesDeskApp/HermesDeskApp.swift`
+- Create: `apps/mac/HermesDeskApp/AppShell/MenuBarScene.swift`
 - Create: `Packages/AppCore/Sources/AppCore/Models/Task.swift`
 - Create: `Packages/HermesKit/Sources/HermesKit/AgentBackend.swift`
 - Create: `Docs/ADRs/0001-mac-first-hermes-only.md`
@@ -165,7 +165,7 @@ agent-hub/
 - 建立 Task / Event / Approval / Capability 基础结构
 
 **Step 4: 验证应用可启动**
-Run: Xcode Build / `xcodebuild -scheme AgentHubApp -destination 'platform=macOS' build`
+Run: Xcode Build / `xcodebuild -scheme HermesDeskApp -destination 'platform=macOS' build`
 Expected: 编译通过，MenuBar 图标出现
 
 **Step 5: Commit**
@@ -180,7 +180,7 @@ Expected: 编译通过，MenuBar 图标出现
 **Files:**
 - Create: `Packages/HermesKit/Sources/HermesKit/HealthClient.swift`
 - Modify: `Packages/HermesKit/Sources/HermesKit/HermesLocalAdapter.swift`
-- Modify: `apps/mac/AgentHubApp/AppShell/MenuBarScene.swift`
+- Modify: `apps/mac/HermesDeskApp/AppShell/MenuBarScene.swift`
 - Test: `Packages/HermesKit/Tests/HermesKitTests/HealthClientTests.swift`
 
 **Step 1: 写失败测试/桩测试**
@@ -263,9 +263,9 @@ Expected: 编译通过，MenuBar 图标出现
 **Objective:** 完成最重要的一屏，让用户一眼看到要处理的事。
 
 **Files:**
-- Create: `apps/mac/AgentHubApp/Features/Inbox/InboxView.swift`
-- Create: `apps/mac/AgentHubApp/Features/Inbox/InboxViewModel.swift`
-- Modify: `apps/mac/AgentHubApp/AppShell/MenuBarScene.swift`
+- Create: `apps/mac/HermesDeskApp/Features/Inbox/InboxView.swift`
+- Create: `apps/mac/HermesDeskApp/Features/Inbox/InboxViewModel.swift`
+- Modify: `apps/mac/HermesDeskApp/AppShell/MenuBarScene.swift`
 - Test: `Packages/AppCore/Tests/AppCoreTests/InboxSortingTests.swift`
 
 **Step 1: 写排序测试**
@@ -292,10 +292,10 @@ Expected: 编译通过，MenuBar 图标出现
 **Objective:** 提供任务级工作界面，承接 timeline、当前阶段、结果卡片与 debug 信息。
 
 **Files:**
-- Create: `apps/mac/AgentHubApp/Features/TaskDetail/TaskDetailView.swift`
-- Create: `apps/mac/AgentHubApp/Features/TaskDetail/TaskDetailViewModel.swift`
-- Create: `apps/mac/AgentHubApp/Features/TaskDetail/TaskTimelineView.swift`
-- Create: `apps/mac/AgentHubApp/Features/TaskDetail/ResultCardView.swift`
+- Create: `apps/mac/HermesDeskApp/Features/TaskDetail/TaskDetailView.swift`
+- Create: `apps/mac/HermesDeskApp/Features/TaskDetail/TaskDetailViewModel.swift`
+- Create: `apps/mac/HermesDeskApp/Features/TaskDetail/TaskTimelineView.swift`
+- Create: `apps/mac/HermesDeskApp/Features/TaskDetail/ResultCardView.swift`
 
 **Step 1: 先用 mock 数据做布局**
 - 跑通 running / waiting_user / failed / succeeded 四种状态
@@ -319,8 +319,8 @@ Expected: 编译通过，MenuBar 图标出现
 **Objective:** 把最关键的确认流做成可用组件。
 
 **Files:**
-- Create: `apps/mac/AgentHubApp/Features/Confirm/ConfirmationCardView.swift`
-- Create: `apps/mac/AgentHubApp/Features/Confirm/ConfirmationActionHandler.swift`
+- Create: `apps/mac/HermesDeskApp/Features/Confirm/ConfirmationCardView.swift`
+- Create: `apps/mac/HermesDeskApp/Features/Confirm/ConfirmationActionHandler.swift`
 - Modify: `Features/TaskDetail/TaskDetailView.swift`
 - Test: `Packages/AppCore/Tests/AppCoreTests/ApprovalActionTests.swift`
 
@@ -349,7 +349,7 @@ Expected: 编译通过，MenuBar 图标出现
 **Objective:** 让失败不只是错误文本，而是一个可恢复工作流。
 
 **Files:**
-- Create: `apps/mac/AgentHubApp/Features/TaskDetail/FailurePanelView.swift`
+- Create: `apps/mac/HermesDeskApp/Features/TaskDetail/FailurePanelView.swift`
 - Modify: `TaskDetailViewModel.swift`
 - Modify: `InboxViewModel.swift`
 - Test: `Packages/AppCore/Tests/AppCoreTests/FailureRecoveryTests.swift`
@@ -376,8 +376,8 @@ Expected: 编译通过，MenuBar 图标出现
 **Objective:** 让连接与环境问题能在 30 秒内定位。
 
 **Files:**
-- Create: `apps/mac/AgentHubApp/Features/Diagnostics/DiagnosticsView.swift`
-- Create: `apps/mac/AgentHubApp/Features/Diagnostics/DiagnosticsViewModel.swift`
+- Create: `apps/mac/HermesDeskApp/Features/Diagnostics/DiagnosticsView.swift`
+- Create: `apps/mac/HermesDeskApp/Features/Diagnostics/DiagnosticsViewModel.swift`
 - Modify: `AppShell/SettingsScene.swift`
 
 **Step 1: 展示当前 Hermes host/port/profile/health**

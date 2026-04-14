@@ -9,11 +9,15 @@ public extension Task {
 
         switch event.type {
         case .messageDelta:
+            pendingAction = nil
+            pendingActionStartedAt = nil
             runState.state = .running
             runState.phaseLabel = "Streaming output"
             runState.failureCategory = nil
             runState.failureMessage = nil
             runState.waitingReason = nil
+            runState.observationState = .live
+            runState.observationMessage = nil
             availableActions = [.stop, .openWorkspace]
 
             if let delta = event.delta {
@@ -24,11 +28,15 @@ public extension Task {
             runState.progressHint = latestOutputSummary
 
         case .reasoningAvailable:
+            pendingAction = nil
+            pendingActionStartedAt = nil
             runState.state = .running
             runState.phaseLabel = "Planning"
             runState.failureCategory = nil
             runState.failureMessage = nil
             runState.waitingReason = nil
+            runState.observationState = .live
+            runState.observationMessage = nil
             availableActions = [.stop, .openWorkspace]
 
             let reasoning = event.reasoning ?? event.timelineDetail ?? event.timelineSummary
@@ -36,11 +44,15 @@ public extension Task {
             runState.progressHint = reasoning.taskDetailSummary(maxLength: 240)
 
         case .toolStarted:
+            pendingAction = nil
+            pendingActionStartedAt = nil
             runState.state = .running
             runState.phaseLabel = event.toolName.map { "Running \($0)" } ?? "Running tool"
             runState.failureCategory = nil
             runState.failureMessage = nil
             runState.waitingReason = nil
+            runState.observationState = .live
+            runState.observationMessage = nil
             availableActions = [.stop, .openWorkspace]
 
             let summary = event.preview?.taskCardSummary()
@@ -49,9 +61,13 @@ public extension Task {
             runState.progressHint = event.preview?.taskDetailSummary(maxLength: 240)
 
         case .toolCompleted:
+            pendingAction = nil
+            pendingActionStartedAt = nil
             runState.state = .running
             runState.phaseLabel = event.isToolError ? "Tool error" : "Continuing"
             runState.waitingReason = nil
+            runState.observationState = .live
+            runState.observationMessage = nil
             availableActions = [.stop, .openWorkspace]
 
             if event.isToolError {
@@ -65,13 +81,80 @@ public extension Task {
             }
             runState.progressHint = event.timelineDetail?.taskDetailSummary(maxLength: 240)
 
+        case .approvalRequested:
+            pendingAction = nil
+            pendingActionStartedAt = nil
+            runState.state = .waitingUser
+            runState.phaseLabel = "Approval requested"
+            runState.progressHint = event.command?.taskDetailSummary(maxLength: 240)
+            runState.failureCategory = nil
+            runState.failureMessage = nil
+            runState.waitingReason = event.eventDescription ?? "Dangerous command requires approval"
+            runState.approvalID = event.approvalID
+            runState.observationState = .live
+            runState.observationMessage = nil
+            availableActions = [.approveOnce, .approveForTask, .reject, .openTerminal, .openWorkspace]
+            currentSummary = (event.eventDescription ?? event.command ?? "Approval requested").taskCardSummary()
+
+        case .approvalResolved:
+            pendingAction = nil
+            pendingActionStartedAt = nil
+            runState.approvalID = nil
+            runState.waitingReason = nil
+            runState.progressHint = nil
+            runState.observationState = .live
+            runState.observationMessage = nil
+            if event.decision == "deny" {
+                runState.state = .failed
+                runState.phaseLabel = "Approval rejected"
+                runState.failureCategory = .approvalRejected
+                runState.failureMessage = "The approval request was rejected."
+                availableActions = [.retry, .openWorkspace]
+                currentSummary = "Approval rejected. Review the task before retrying."
+            } else {
+                runState.state = .running
+                runState.phaseLabel = "Approval granted"
+                runState.failureCategory = nil
+                runState.failureMessage = nil
+                availableActions = [.stop, .openWorkspace]
+                currentSummary = "Approval granted. Hermes can continue the task."
+            }
+
+        case .observationReconnecting:
+            runState.observationState = .reconnecting
+            runState.observationMessage = event.message ?? "Reconnecting to Hermes live updates."
+
+        case .observationDisconnected:
+            runState.observationState = .disconnected
+            runState.observationMessage = event.message ?? "Live updates paused after repeated reconnect failures."
+
+        case .runInterrupted:
+            pendingAction = nil
+            pendingActionStartedAt = nil
+            runState.state = .cancelled
+            runState.phaseLabel = "Stopped"
+            runState.progressHint = nil
+            runState.failureCategory = nil
+            runState.failureMessage = nil
+            runState.waitingReason = nil
+            runState.approvalID = nil
+            runState.observationState = .live
+            runState.observationMessage = nil
+            availableActions = [.openWorkspace]
+            currentSummary = (event.message ?? "Run interrupted").taskCardSummary()
+
         case .runCompleted:
+            pendingAction = nil
+            pendingActionStartedAt = nil
             runState.state = .succeeded
             runState.phaseLabel = "Completed"
             runState.progressHint = nil
             runState.failureCategory = nil
             runState.failureMessage = nil
             runState.waitingReason = nil
+            runState.approvalID = nil
+            runState.observationState = .live
+            runState.observationMessage = nil
             availableActions = [.copyResult, .openWorkspace]
 
             if let output = event.output, output.isEmpty == false, output.count >= self.output.count {
@@ -93,12 +176,17 @@ public extension Task {
             )
 
         case .runFailed:
+            pendingAction = nil
+            pendingActionStartedAt = nil
             runState.state = .failed
             runState.phaseLabel = "Run failed"
             runState.progressHint = nil
             runState.failureCategory = .unknownError
             runState.failureMessage = event.failureMessage ?? "Hermes run failed."
             runState.waitingReason = nil
+            runState.approvalID = nil
+            runState.observationState = .live
+            runState.observationMessage = nil
             availableActions = [.retry, .openWorkspace]
             currentSummary = (event.failureMessage ?? "Hermes run failed.").taskCardSummary()
         }
@@ -137,6 +225,10 @@ private extension HermesRunEvent {
             return .step
         case .toolCompleted:
             return isToolError ? .error : .step
+        case .approvalRequested, .approvalResolved:
+            return .confirm
+        case .observationReconnecting, .observationDisconnected, .runInterrupted:
+            return .stateChange
         case .runCompleted:
             return .result
         case .runFailed:

@@ -15,10 +15,10 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "92C70422761BBD9671A4EDFA"
-               BuildableName = "AgentHubApp.app"
-               BlueprintName = "AgentHubApp"
-               ReferencedContainer = "container:AgentHub.xcodeproj">
+               BlueprintIdentifier = "A724690CDEB9D75B769D7DEA"
+               BuildableName = "HermesDeskApp.app"
+               BlueprintName = "HermesDeskApp"
+               ReferencedContainer = "container:HermesDesk.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -32,14 +32,27 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "92C70422761BBD9671A4EDFA"
-            BuildableName = "AgentHubApp.app"
-            BlueprintName = "AgentHubApp"
-            ReferencedContainer = "container:AgentHub.xcodeproj">
+            BlueprintIdentifier = "A724690CDEB9D75B769D7DEA"
+            BuildableName = "HermesDeskApp.app"
+            BlueprintName = "HermesDeskApp"
+            ReferencedContainer = "container:HermesDesk.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
       <Testables>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "9733065B55EE7D58DE5904D9"
+               BuildableName = "HermesDeskAppTests.xctest"
+               BlueprintName = "HermesDeskAppTests"
+               ReferencedContainer = "container:HermesDesk.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
+      <CommandLineArguments>
+      </CommandLineArguments>
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"
@@ -55,10 +68,10 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "92C70422761BBD9671A4EDFA"
-            BuildableName = "AgentHubApp.app"
-            BlueprintName = "AgentHubApp"
-            ReferencedContainer = "container:AgentHub.xcodeproj">
+            BlueprintIdentifier = "A724690CDEB9D75B769D7DEA"
+            BuildableName = "HermesDeskApp.app"
+            BlueprintName = "HermesDeskApp"
+            ReferencedContainer = "container:HermesDesk.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -72,10 +85,10 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "92C70422761BBD9671A4EDFA"
-            BuildableName = "AgentHubApp.app"
-            BlueprintName = "AgentHubApp"
-            ReferencedContainer = "container:AgentHub.xcodeproj">
+            BlueprintIdentifier = "A724690CDEB9D75B769D7DEA"
+            BuildableName = "HermesDeskApp.app"
+            BlueprintName = "HermesDeskApp"
+            ReferencedContainer = "container:HermesDesk.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

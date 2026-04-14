@@ -28,6 +28,7 @@ final class RunClientTests: XCTestCase {
             XCTAssertEqual(json["input"] as? String, "Ship it")
             XCTAssertEqual(json["session_id"] as? String, "session-1")
             XCTAssertEqual(json["instructions"] as? String, "Stay brief")
+            XCTAssertNil(json["conversation_history"])
 
             let response = #"{"run_id":"run_123","status":"started"}"#.data(using: .utf8) ?? Data()
             return (response, makeRunResponse(url: url, statusCode: 202))
@@ -42,6 +43,37 @@ final class RunClientTests: XCTestCase {
 
         XCTAssertEqual(response.runID, "run_123")
         XCTAssertEqual(response.status, "started")
+    }
+
+    func testStartRunEncodesConversationHistoryWhenProvided() async throws {
+        let endpoint = HermesEndpoint(host: "localhost", port: 8642)
+        let url = try XCTUnwrap(endpoint.baseURL?.appending(path: "v1/runs"))
+        let session = MockRunHTTPSession { request in
+            let body = try XCTUnwrap(request.httpBody)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            let history = try XCTUnwrap(json["conversation_history"] as? [[String: Any]])
+            XCTAssertEqual(history.count, 2)
+            XCTAssertEqual(history[0]["role"] as? String, "user")
+            XCTAssertEqual(history[0]["content"] as? String, "第一句")
+            XCTAssertEqual(history[1]["role"] as? String, "assistant")
+            XCTAssertEqual(history[1]["content"] as? String, "第一句的回复")
+
+            let response = #"{"run_id":"run_456","status":"started"}"#.data(using: .utf8) ?? Data()
+            return (response, makeRunResponse(url: url, statusCode: 202))
+        }
+
+        let client = RunClient(endpoint: endpoint, apiKey: "local-dev-key", session: session)
+        let response = try await client.startRun(HermesRunRequest(
+            input: "继续这个会话",
+            sessionID: "session-1",
+            instructions: nil,
+            conversationHistory: [
+                HermesConversationHistoryMessage(role: "user", content: "第一句"),
+                HermesConversationHistoryMessage(role: "assistant", content: "第一句的回复")
+            ]
+        ))
+
+        XCTAssertEqual(response.runID, "run_456")
     }
 
     func testParseStartRunResponseMapsUnauthorizedStatus() throws {
@@ -83,5 +115,58 @@ final class RunClientTests: XCTestCase {
         XCTAssertEqual(events.first?.delta, "hello")
         XCTAssertEqual(events.last?.type, .runCompleted)
         XCTAssertEqual(events.last?.usage?.totalTokens, 3)
+    }
+
+    func testEventParserParsesApprovalRequestedAndInterruptedEvents() throws {
+        var parser = HermesRunEventStreamParser()
+        let lines = [
+            "data: {\"event\":\"approval.requested\",\"run_id\":\"run_approval\",\"timestamp\":1710000002.0,\"approval_id\":\"approval_1\",\"command\":\"rm -rf /tmp/demo\",\"description\":\"Dangerous command\",\"allow_permanent\":true}",
+            "",
+            "data: {\"event\":\"run.interrupted\",\"run_id\":\"run_approval\",\"timestamp\":1710000003.0,\"message\":\"Stop requested via API server\"}",
+            ""
+        ]
+
+        var events: [HermesRunEvent] = []
+        for line in lines {
+            if let event = try parser.consume(line: line) {
+                events.append(event)
+            }
+        }
+
+        XCTAssertEqual(events.count, 2)
+        XCTAssertEqual(events.first?.type, .approvalRequested)
+        XCTAssertEqual(events.first?.approvalID, "approval_1")
+        XCTAssertEqual(events.first?.command, "rm -rf /tmp/demo")
+        XCTAssertEqual(events.last?.type, .runInterrupted)
+        XCTAssertEqual(events.last?.message, "Stop requested via API server")
+    }
+
+    func testRunActionAddsApprovalIDAndParsesResponse() async throws {
+        let endpoint = HermesEndpoint(host: "localhost", port: 8642)
+        let url = try XCTUnwrap(endpoint.baseURL?.appending(path: "v1/runs/run_123/actions"))
+        let session = MockRunHTTPSession { request in
+            XCTAssertEqual(request.url, url)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer local-dev-key")
+            XCTAssertEqual(request.httpMethod, "POST")
+
+            let body = try XCTUnwrap(request.httpBody)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(json["action"] as? String, "approve_once")
+            XCTAssertEqual(json["approval_id"] as? String, "approval_1")
+
+            let response = #"{"run_id":"run_123","status":"approval_resolved","approval_id":"approval_1","decision":"once"}"#.data(using: .utf8) ?? Data()
+            return (response, makeRunResponse(url: url, statusCode: 200))
+        }
+
+        let client = RunClient(endpoint: endpoint, apiKey: "local-dev-key", session: session)
+        let response = try await client.performRunAction(
+            runID: "run_123",
+            request: HermesRunActionRequest(action: .approveOnce, approvalID: "approval_1")
+        )
+
+        XCTAssertEqual(response.runID, "run_123")
+        XCTAssertEqual(response.status, "approval_resolved")
+        XCTAssertEqual(response.approvalID, "approval_1")
+        XCTAssertEqual(response.decision, "once")
     }
 }

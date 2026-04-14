@@ -2,8 +2,10 @@ import Foundation
 
 public struct HermesLocalAdapter: AgentBackend, Sendable {
     public let endpoint: HermesEndpoint
+    public let diagnostics: AgentBackendDiagnostics
     private let healthClient: HealthClient
     private let runClient: RunClient
+    private let transcriptStore: HermesLocalTranscriptStore
 
     public init(
         configuration: HermesLocalServerConfiguration = .discover(),
@@ -12,6 +14,13 @@ public struct HermesLocalAdapter: AgentBackend, Sendable {
         timeout: TimeInterval = 60
     ) {
         endpoint = configuration.endpoint
+        diagnostics = AgentBackendDiagnostics(
+            adapterName: "Hermes",
+            hermesHomePath: configuration.hermesHomePath,
+            environmentFilePath: configuration.environmentFilePath,
+            environmentFileExists: configuration.environmentFileExists,
+            apiKeyConfigured: configuration.apiKey?.isEmpty == false
+        )
         healthClient = HealthClient(
             endpoint: configuration.endpoint,
             apiKey: configuration.apiKey,
@@ -25,6 +34,11 @@ public struct HermesLocalAdapter: AgentBackend, Sendable {
             streamSession: streamSession,
             timeout: timeout
         )
+        transcriptStore = HermesLocalTranscriptStore(
+            stateDBPath: URL(fileURLWithPath: configuration.hermesHomePath, isDirectory: true)
+                .appending(path: "state.db")
+                .path
+        )
     }
 
     public func health() async -> HermesConnectionState {
@@ -34,14 +48,55 @@ public struct HermesLocalAdapter: AgentBackend, Sendable {
     public func startRun(
         input: String,
         sessionID: String?,
-        instructions: String?
+        instructions: String?,
+        conversationHistory: [HermesConversationHistoryMessage]?
     ) async throws -> HermesRunStartResponse {
         try await runClient.startRun(
-            HermesRunRequest(input: input, sessionID: sessionID, instructions: instructions)
+            HermesRunRequest(
+                input: input,
+                sessionID: sessionID,
+                instructions: instructions,
+                conversationHistory: conversationHistory
+            )
         )
+    }
+
+    public func performRunAction(
+        runID: String,
+        request: HermesRunActionRequest
+    ) async throws -> HermesRunActionResponse {
+        try await runClient.performRunAction(runID: runID, request: request)
     }
 
     public func runEvents(for runID: String) -> AsyncThrowingStream<HermesRunEvent, Error> {
         runClient.runEvents(for: runID)
+    }
+
+    public func fetchSessionMessages(sessionID: String) async throws -> [HermesConversationMessage] {
+        do {
+            return try transcriptStore.fetchSessionMessages(sessionID: sessionID)
+        } catch HermesLocalTranscriptStoreError.databaseMissing {
+            return []
+        }
+    }
+
+    public func fetchSessionMessagesPage(
+        sessionID: String,
+        limit: Int,
+        before: HermesConversationPageCursor?
+    ) async throws -> HermesConversationPage {
+        do {
+            return try transcriptStore.fetchSessionMessagesPage(sessionID: sessionID, limit: limit, before: before)
+        } catch HermesLocalTranscriptStoreError.databaseMissing {
+            return HermesConversationPage(messages: [], hasMoreBefore: false)
+        }
+    }
+
+    public func fetchSessionBinding(preferredSessionID: String, rootSessionID: String?) async throws -> HermesSessionBinding? {
+        do {
+            return try transcriptStore.fetchSessionBinding(preferredSessionID: preferredSessionID, rootSessionID: rootSessionID)
+        } catch HermesLocalTranscriptStoreError.databaseMissing {
+            return nil
+        }
     }
 }

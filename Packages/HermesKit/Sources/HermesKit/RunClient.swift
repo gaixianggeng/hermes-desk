@@ -92,6 +92,34 @@ public struct RunClient: Sendable {
         }
     }
 
+    public func performRunAction(
+        runID: String,
+        request: HermesRunActionRequest
+    ) async throws -> HermesRunActionResponse {
+        guard let url = endpoint.baseURL?.appending(path: "v1/runs/\(runID)/actions") else {
+            throw HermesRunClientError.invalidEndpoint(endpoint.displayName)
+        }
+
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
+        urlRequest.timeoutInterval = timeout
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        applyAuthorizationHeader(to: &urlRequest)
+        urlRequest.httpBody = try JSONEncoder().encode(request)
+
+        do {
+            let (data, response) = try await session.data(for: urlRequest)
+            return try parseRunActionResponse(from: data, response: response)
+        } catch let error as HermesRunClientError {
+            throw error
+        } catch let error as URLError {
+            throw HermesRunClientError.transport(error.localizedDescription)
+        } catch {
+            throw HermesRunClientError.transport(error.localizedDescription)
+        }
+    }
+
     public func runEvents(for runID: String) -> AsyncThrowingStream<HermesRunEvent, Error> {
         AsyncThrowingStream { continuation in
             guard let url = endpoint.baseURL?.appending(path: "v1/runs/\(runID)/events") else {
@@ -172,6 +200,26 @@ public struct RunClient: Sendable {
         }
     }
 
+    public func parseRunActionResponse(from data: Data, response: URLResponse) throws -> HermesRunActionResponse {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw HermesRunClientError.invalidResponse
+        }
+
+        switch httpResponse.statusCode {
+        case 200 ..< 300:
+            do {
+                return try JSONDecoder().decode(HermesRunActionResponse.self, from: data)
+            } catch {
+                throw HermesRunClientError.invalidResponse
+            }
+        case 401:
+            throw HermesRunClientError.unauthorized
+        default:
+            let body = String(data: data, encoding: .utf8)
+            throw HermesRunClientError.unexpectedStatus(httpResponse.statusCode, body)
+        }
+    }
+
     private func applyAuthorizationHeader(to request: inout URLRequest) {
         guard let apiKey, apiKey.isEmpty == false else {
             return
@@ -185,16 +233,19 @@ private struct StartRunRequestBody: Encodable {
     let input: String
     let sessionID: String?
     let instructions: String?
+    let conversationHistory: [HermesConversationHistoryMessage]?
 
     init(request: HermesRunRequest) {
         input = request.input
         sessionID = request.sessionID
         instructions = request.instructions
+        conversationHistory = request.conversationHistory
     }
 
     private enum CodingKeys: String, CodingKey {
         case input
         case sessionID = "session_id"
         case instructions
+        case conversationHistory = "conversation_history"
     }
 }

@@ -1,6 +1,6 @@
-# Agent Hub 协议与状态机 v0.1
+# Hermes Desk 协议与状态机 v0.1
 
-> **目标**：统一 Agent Hub 在 Phase 0 / Phase 1 的对象模型、消息协议、状态机与能力边界  
+> **目标**：统一 Hermes Desk 在 Phase 0 / Phase 1 的对象模型、消息协议、状态机与能力边界  
 > **适用范围**：Mac-first、Hermes-only、本机通信优先  
 > **原则**：先把 UI/协议内部模型统一，再决定外部远程协议与多端同步
 
@@ -268,14 +268,14 @@
 ### payload
 ```json
 {
-  "summary": "已完成 Agent Hub PRD 草稿",
+  "summary": "已完成 Hermes Desk PRD 草稿",
   "key_outputs": [
     "输出 PRD v1",
     "统一协议 v0.1",
     "确定 Mac-first 路线"
   ],
   "files": [
-    {"path": "docs/plans/2026-04-11-agent-hub-prd-v1-mac-first.md"}
+    {"path": "docs/plans/2026-04-11-hermes-desk-prd-v1-mac-first.md"}
   ],
   "next_actions": [
     "开始搭建 Mac MenuBar 原型",
