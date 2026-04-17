@@ -1515,26 +1515,7 @@ struct DashboardView: View {
             return legacyWorkspaceFeedEntries(for: task)
         }
         if transcriptMessages.isEmpty {
-            var entries: [WorkspaceFeedEntry]
-            if appState.isTranscriptLoading(for: task) {
-                entries = pendingEntries.isEmpty ? loadingWorkspaceFeedEntries(for: task) : pendingEntries
-            } else if pendingEntries.isEmpty == false {
-                entries = pendingEntries
-            } else {
-                entries = [
-                    WorkspaceFeedEntry(
-                        id: "awaiting-transcript-\(task.taskID)",
-                        title: "Loading conversation",
-                        body: "Conversation history is syncing for this task.",
-                        footer: task.updatedAt.formatted(date: .abbreviated, time: .shortened),
-                        alignment: .leading,
-                        background: Color.secondary.opacity(0.08),
-                        tint: .secondary,
-                        monospaced: false,
-                        showsProgress: true
-                    )
-                ]
-            }
+            var entries = pendingEntries.isEmpty ? legacyWorkspaceFeedEntries(for: task) : pendingEntries
 
             if let transcriptSyncEntry = workspaceTranscriptSyncEntry(for: task, transcriptMessages: []) {
                 entries.append(transcriptSyncEntry)
@@ -1896,6 +1877,9 @@ struct DashboardView: View {
             return (task.runState.failureMessage ?? "Hermes hit an issue and needs recovery.").workspaceSnippet(maxLength: 180)
         }
         if taskAwaitsTranscriptSync(task) {
+            if let resultSummary = workspaceResultSummary(for: task) {
+                return resultSummary.workspaceSnippet(maxLength: 180)
+            }
             return (task.runState.progressHint ?? "Hermes finished the run, but the latest reply is still syncing.").workspaceSnippet(maxLength: 180)
         }
         if task.sessionStatus == .running {

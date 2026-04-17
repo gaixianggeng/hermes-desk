@@ -6,28 +6,28 @@
 
 ## 2. Current-Turn Delivery
 
-- [ ] 2.1 Materialize the final assistant reply from `run.completed.output` directly into the Desk transcript/cache
-- [ ] 2.2 Keep draft/live streaming messages visible through run completion without making transcript hydration a prerequisite
-- [ ] 2.3 Treat `syncing` placeholders as secondary status UI only; never let them replace a known final answer
+- [x] 2.1 Materialize the final assistant reply from `run.completed.output` directly into the Desk transcript/cache
+- [x] 2.2 Keep draft/live streaming messages visible through run completion without making transcript hydration a prerequisite
+- [x] 2.3 Treat `syncing` placeholders as secondary status UI only; never let them replace a known final answer
 
 ## 3. Run-Only Backend Contract
 
-- [ ] 3.1 Keep `AgentBackend` and `HermesLocalAdapter` centered on run start, run action, and run SSE transport for phase 1
-- [ ] 3.2 Reuse stable `session_id` values for follow-up prompts inside the same task
-- [ ] 3.3 Ensure the current turn succeeds visibly even when no transcript/session reconciliation path exists
+- [x] 3.1 Keep `AgentBackend` and `HermesLocalAdapter` centered on run start, run action, and run SSE transport for phase 1
+- [x] 3.2 Reuse stable `session_id` values for follow-up prompts inside the same task
+- [x] 3.3 Ensure the current turn succeeds visibly even when no transcript/session reconciliation path exists
 
 ## 4. Client State Ownership
 
 - [ ] 4.1 Keep the client-owned task state minimal and scoped to active task/workspace rendering
-- [ ] 4.2 Remove any remaining assumptions that transcript hydration must complete before the current answer is shown
+- [x] 4.2 Remove any remaining assumptions that transcript hydration must complete before the current answer is shown
 - [ ] 4.3 Avoid introducing direct local Hermes storage reads as a fallback path
 
 ## 5. Verification
 
-- [ ] 5.1 Add tests covering task creation, continuation, approvals, and final-answer visibility when transcript hydration never arrives
+- [x] 5.1 Add tests covering task creation, continuation, approvals, and final-answer visibility when transcript hydration never arrives
 - [ ] 5.2 Add tests covering task-scoped relaunch behavior from lightweight client-owned state
-- [ ] 5.3 Add tests covering malformed or unknown SSE frames without losing the final answer
-- [ ] 5.4 Validate that the existing Dashboard/workspace UI still renders correctly with the new internal data flow
+- [x] 5.3 Add tests covering malformed or unknown SSE frames without losing the final answer
+- [x] 5.4 Validate that the existing Dashboard/workspace UI still renders correctly with the new internal data flow
 
 ## 6. Later Phase (Explicitly Deferred)
 
