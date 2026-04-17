@@ -287,6 +287,7 @@ final class AppStateStore: ObservableObject {
                 selectedTaskID = nil
             }
             selectDefaultTaskIfNeeded()
+            materializeDeferredStreamingOutputForSelectedAgent()
         }
     }
     @Published var tasks: [Task] = [] {
@@ -330,6 +331,7 @@ final class AppStateStore: ObservableObject {
     private var bufferedStreamingTimestampsByTaskID: [Task.ID: Date] = [:]
     private var streamingFlushTasksByTaskID: [Task.ID: Swift.Task<Void, Never>] = [:]
     private var streamingDeltaMetricsByTaskID: [Task.ID: (count: Int, chars: Int)] = [:]
+    private var deferredStreamingOutputByTaskID: [Task.ID: (content: String, timestamp: Date)] = [:]
     private var nextLocalTranscriptMessageID: Int64 = -1
 
     init(
@@ -725,6 +727,9 @@ final class AppStateStore: ObservableObject {
         }
         selectedTaskID = task?.taskID
         taskActionFeedback = nil
+        if let task {
+            materializeDeferredStreamingOutputIfNeeded(for: task.taskID)
+        }
         guard let task else { return }
         beginTranscriptLoadIfNeeded(for: task)
     }
@@ -735,6 +740,7 @@ final class AppStateStore: ObservableObject {
         taskActionFeedback = nil
         guard let id, let task = tasks.first(where: { $0.taskID == id }) else { return }
         selectedAgentID = task.agentID
+        materializeDeferredStreamingOutputIfNeeded(for: task.taskID)
         beginTranscriptLoadIfNeeded(for: task)
     }
 
@@ -921,6 +927,50 @@ final class AppStateStore: ObservableObject {
         return .milliseconds(120)
     }
 
+    private func shouldDeferStreamingTaskUpdate(for taskID: Task.ID) -> Bool {
+        guard let task = tasks.first(where: { $0.taskID == taskID }) else {
+            return false
+        }
+        return task.agentID != selectedAgentID
+    }
+
+    private func materializeDeferredStreamingOutputIfNeeded(for taskID: Task.ID) {
+        guard let deferred = deferredStreamingOutputByTaskID.removeValue(forKey: taskID),
+              let index = tasks.firstIndex(where: { $0.taskID == taskID }) else {
+            return
+        }
+
+        tasks[index].updatedAt = deferred.timestamp
+        tasks[index].runState.lastEventAt = deferred.timestamp
+        tasks[index].output += deferred.content
+        tasks[index].currentSummary = tasks[index].latestOutputSummary ?? tasks[index].currentSummary
+        tasks[index].runState.progressHint = tasks[index].latestOutputSummary
+
+        if let sessionID = tasks[index].effectiveSessionID {
+            let content = tasks[index].output.trimmingCharacters(in: .whitespacesAndNewlines)
+            if content.isEmpty == false {
+                upsertStreamingAssistantMessage(
+                    for: taskID,
+                    sessionID: sessionID,
+                    content: content,
+                    timestamp: deferred.timestamp
+                )
+            }
+        }
+    }
+
+    private func materializeDeferredStreamingOutputForSelectedAgent() {
+        guard let selectedAgentID else {
+            return
+        }
+        let visibleTaskIDs = tasks
+            .filter { $0.agentID == selectedAgentID }
+            .map(\.taskID)
+        visibleTaskIDs.forEach { taskID in
+            materializeDeferredStreamingOutputIfNeeded(for: taskID)
+        }
+    }
+
     private func flushBufferedStreamingDelta(for taskID: Task.ID, logMetrics: Bool = true) {
         streamingFlushTasksByTaskID[taskID]?.cancel()
         streamingFlushTasksByTaskID[taskID] = nil
@@ -930,6 +980,17 @@ final class AppStateStore: ObservableObject {
               let timestamp = bufferedStreamingTimestampsByTaskID.removeValue(forKey: taskID),
               let index = tasks.firstIndex(where: { $0.taskID == taskID }) else {
             streamingDeltaMetricsByTaskID.removeValue(forKey: taskID)
+            return
+        }
+
+        if shouldDeferStreamingTaskUpdate(for: taskID) {
+            let existingDeferred = deferredStreamingOutputByTaskID[taskID]?.content ?? ""
+            deferredStreamingOutputByTaskID[taskID] = (existingDeferred + delta, timestamp)
+            if logMetrics, let metrics = streamingDeltaMetricsByTaskID.removeValue(forKey: taskID) {
+                HermesDeskRunObservationLog.append(
+                    "delta batch task=\(taskID) chunks=\(metrics.count) chars=\(metrics.chars)"
+                )
+            }
             return
         }
 
@@ -1849,6 +1910,7 @@ final class AppStateStore: ObservableObject {
 
     private func finalizeStreamClosure(forTaskID taskID: String, runID: String) async {
         flushBufferedStreamingDelta(for: taskID, logMetrics: true)
+        materializeDeferredStreamingOutputIfNeeded(for: taskID)
         await refreshWorkspaceState(forTaskID: taskID, force: true)
         guard let index = tasks.firstIndex(where: { $0.taskID == taskID }) else {
             HermesDeskRunObservationLog.append("finalize missing task task=\(taskID) run=\(runID)")
@@ -1973,6 +2035,9 @@ final class AppStateStore: ObservableObject {
         }
 
         flushBufferedStreamingDelta(for: taskID, logMetrics: false)
+        if event.type == .runCompleted || event.type == .runFailed || event.type == .runInterrupted {
+            materializeDeferredStreamingOutputIfNeeded(for: taskID)
+        }
         tasks[index].apply(hermesEvent: event)
         if event.type == .runCompleted || event.type == .runFailed || event.type == .runInterrupted {
             tasks[index].runID = nil

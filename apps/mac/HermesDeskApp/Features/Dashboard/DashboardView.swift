@@ -44,6 +44,8 @@ struct DashboardView: View {
     @State private var shouldAutoScrollSelectedTask = true
     @State private var pendingForcedAutoScrollTaskID: Task.ID?
     @State private var expandedInspectorEventIDs: Set<String> = []
+    @State private var selectedTaskSnapshot: Task?
+    @State private var selectedTaskEntriesSnapshot: [WorkspaceFeedEntry] = []
     @FocusState private var composerIsFocused: Bool
 
     var body: some View {
@@ -91,6 +93,7 @@ struct DashboardView: View {
         }
         .task {
             syncSelectionToScope()
+            refreshSelectedTaskSnapshot()
         }
         .onChange(of: listScope) {
             taskFilter = .all
@@ -109,6 +112,9 @@ struct DashboardView: View {
             HermesDeskPerformanceLog.selection(
                 "dashboard task old=\(oldValue ?? "nil") new=\(newValue ?? "nil") transcript=\(transcriptCount) visibleTasks=\(displayedTasks.count)"
             )
+        }
+        .onChange(of: selectedTaskSnapshotKey) { _, _ in
+            refreshSelectedTaskSnapshot()
         }
     }
 
@@ -308,8 +314,8 @@ struct DashboardView: View {
 
     private var workspaceColumn: some View {
         VStack(spacing: 0) {
-            if let task = appState.selectedTask {
-                let entries = workspaceFeedEntries(for: task)
+            if let task = selectedTaskSnapshot {
+                let entries = selectedTaskEntriesSnapshot
                 workspaceHeader(task)
                 Divider()
                 GeometryReader { geometry in
@@ -386,7 +392,7 @@ struct DashboardView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            workspaceComposerInset(task: appState.selectedTask)
+            workspaceComposerInset(task: selectedTaskSnapshot)
         }
     }
 
@@ -947,7 +953,7 @@ struct DashboardView: View {
 
     private var inspectorColumn: some View {
         Group {
-            if let task = appState.selectedTask {
+            if let task = selectedTaskSnapshot {
                 VStack(alignment: .leading, spacing: 16) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Inspector")
@@ -1651,6 +1657,30 @@ struct DashboardView: View {
         HermesDeskPerformanceLog.selection(
             "scope sync selectedTask=\(selectedTask.taskID) visibleTasks=\(displayedTasks.count) ms=\(HermesDeskPerformanceLog.formatElapsedMS(since: syncStart))"
         )
+    }
+
+    private var selectedTaskSnapshotKey: SelectedTaskSnapshotKey {
+        let selectedTask = appState.selectedTask
+        return SelectedTaskSnapshotKey(
+            task: selectedTask,
+            transcriptCount: selectedTask.map { appState.transcriptMessages(for: $0).count } ?? 0,
+            pendingCount: selectedTask.map { appState.pendingOutgoingMessages(for: $0).count } ?? 0,
+            transcriptDisplayMode: transcriptDisplayMode,
+            taskActionFeedback: selectedTask.map { task in
+                appState.selectedTaskID == task.taskID ? appState.taskActionFeedback : nil
+            } ?? nil
+        )
+    }
+
+    private func refreshSelectedTaskSnapshot() {
+        guard let selectedTask = appState.selectedTask else {
+            selectedTaskSnapshot = nil
+            selectedTaskEntriesSnapshot = []
+            return
+        }
+
+        selectedTaskSnapshot = selectedTask
+        selectedTaskEntriesSnapshot = workspaceFeedEntries(for: selectedTask)
     }
 
     private func prepareComposerForNewTask() {
@@ -2799,6 +2829,14 @@ private struct WorkspaceBubblePalette {
     let bottom: Color
     let stroke: Color
     let shadow: Color
+}
+
+private struct SelectedTaskSnapshotKey: Equatable {
+    let task: Task?
+    let transcriptCount: Int
+    let pendingCount: Int
+    let transcriptDisplayMode: HermesWorkspaceTranscriptMode
+    let taskActionFeedback: String?
 }
 
 private struct WorkspaceBubbleShape: InsettableShape {

@@ -349,11 +349,12 @@ final class AppStateStoreTests: XCTestCase {
             )
         }
         store.flushBufferedStreamingDeltaForTesting(taskID: alphaTask.taskID)
+        store.selectTask(alphaTask)
         let elapsedMS = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
 
         let hiddenTask = try XCTUnwrap(store.tasks.first(where: { $0.taskID == alphaTask.taskID }))
         XCTAssertTrue(hiddenTask.output.contains("chunk-199"))
-        XCTAssertEqual(store.transcriptMessages(for: hiddenTask).count, 0)
+        XCTAssertFalse(store.transcriptMessages(for: hiddenTask).isEmpty)
         XCTAssertLessThan(elapsedMS, 2_000)
         print("LOCAL_BENCH hidden-stream-switch elapsed_ms=\(String(format: "%.2f", elapsedMS))")
     }
