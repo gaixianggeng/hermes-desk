@@ -356,6 +356,47 @@ final class AppStateStoreTests: XCTestCase {
         XCTAssertEqual(store.selectedTaskID, taskID)
     }
 
+    func testRunCompletedEventMaterializesFinalReplyWithoutTranscriptHydration() async throws {
+        let backend = StubBackend(
+            diagnostics: AgentBackendDiagnostics(
+                adapterName: "Hermes",
+                hermesHomePath: "/tmp/default",
+                environmentFilePath: "/tmp/default/.env",
+                environmentFileExists: true,
+                apiKeyConfigured: true
+            )
+        )
+        let agent = HermesAgentDescriptor(
+            agentID: "alpha01",
+            displayName: "Alpha",
+            roleSummary: nil,
+            runtimeProfileID: "alpha01",
+            runtimeProfile: HermesProfileDescriptor(
+                profileID: "alpha01",
+                displayName: "alpha01",
+                hermesHomePath: "/tmp/profile",
+                environmentFilePath: "/tmp/profile/.env",
+                environmentFileExists: false
+            )
+        )
+        let store = AppStateStore(backend: backend, initialAgents: [agent], initialBackendsByRuntimeProfileID: [:])
+        backend.runEventsByRunID["run_1"] = [
+            HermesRunEvent(type: .runCompleted, runID: "run_1", timestamp: .now, output: "苏州今天多云，26°C。")
+        ]
+
+        try await store.startHermesTask(title: nil, prompt: "苏州今天的问题", continuingTaskID: nil)
+        let taskID = try XCTUnwrap(store.tasks.first?.taskID)
+        try await Swift.Task.sleep(nanoseconds: 50_000_000)
+
+        let task = try XCTUnwrap(store.tasks.first(where: { $0.taskID == taskID }))
+        XCTAssertNil(task.runID)
+        XCTAssertEqual(task.output, "苏州今天多云，26°C。")
+        XCTAssertEqual(task.currentSummary, "苏州今天多云，26°C。")
+        XCTAssertEqual(task.runState.phaseLabel, "Conversation updated")
+        XCTAssertNil(task.artifact)
+        XCTAssertEqual(store.transcriptMessages(for: task).map(\.displayText), ["苏州今天的问题", "苏州今天多云，26°C。"])
+    }
+
     func testPendingOutgoingClearsAfterPersistedUserMessage() async throws {
         let backend = StubBackend(
             diagnostics: AgentBackendDiagnostics(

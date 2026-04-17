@@ -1165,18 +1165,11 @@ final class AppStateStore: ObservableObject {
             return
         }
 
-        tasks[index].runID = nil
-        tasks[index].pendingAction = nil
-        tasks[index].pendingActionStartedAt = nil
-        tasks[index].runState.state = .running
-        tasks[index].runState.phaseLabel = text(zh: "对话已更新", en: "Conversation updated")
-        tasks[index].runState.progressHint = nil
-        tasks[index].runState.observationState = .live
-        tasks[index].runState.observationMessage = nil
-        tasks[index].currentSummary = finalText.count > 180 ? String(finalText.prefix(180)) + "…" : finalText
-        tasks[index].output = finalText
-        tasks[index].availableActions = [.openWorkspace]
-        tasks[index].artifact = nil
+        settleConversationRun(
+            at: index,
+            finalText: finalText,
+            phaseLabel: text(zh: "对话已更新", en: "Conversation updated")
+        )
     }
 
     private func enqueuePendingOutgoingMessage(_ content: String, sessionID: String, taskID: Task.ID) {
@@ -1642,13 +1635,11 @@ final class AppStateStore: ObservableObject {
         tasks[index].runState.observationMessage = nil
 
         if finalText.isEmpty == false {
-            tasks[index].runState.state = .running
-            tasks[index].runState.phaseLabel = text(zh: "对话已更新", en: "Conversation updated")
-            tasks[index].runState.progressHint = nil
-            tasks[index].currentSummary = finalText.count > 180 ? String(finalText.prefix(180)) + "…" : finalText
-            tasks[index].output = finalText
-            tasks[index].availableActions = [.openWorkspace]
-            tasks[index].artifact = nil
+            settleConversationRun(
+                at: index,
+                finalText: finalText,
+                phaseLabel: text(zh: "对话已更新", en: "Conversation updated")
+            )
         } else {
             tasks[index].runState.state = .running
             tasks[index].runState.phaseLabel = text(zh: "等待对话同步", en: "Waiting for transcript sync")
@@ -1764,6 +1755,11 @@ final class AppStateStore: ObservableObject {
                         content: content,
                         timestamp: event.timestamp
                     )
+                    settleConversationRun(
+                        at: index,
+                        finalText: content,
+                        phaseLabel: text(zh: "对话已更新", en: "Conversation updated")
+                    )
                 }
             case .runFailed, .runInterrupted:
                 break
@@ -1787,7 +1783,7 @@ final class AppStateStore: ObservableObject {
         }
 
         if sessionID != nil,
-           event.type == .runCompleted || event.type == .runFailed || event.type == .runInterrupted {
+           event.type == .runFailed || event.type == .runInterrupted {
             Swift.Task { [weak self] in
                 await self?.refreshTranscripts(forTaskID: taskID, force: true)
             }
@@ -1796,6 +1792,32 @@ final class AppStateStore: ObservableObject {
             rebuildWorkspaceMessagesCache(for: task)
             persistClientState()
         }
+    }
+
+    private func settleConversationRun(at index: Int, finalText: String, phaseLabel: String) {
+        let trimmed = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            return
+        }
+
+        tasks[index].runID = nil
+        tasks[index].pendingAction = nil
+        tasks[index].pendingActionStartedAt = nil
+        tasks[index].runState.state = .running
+        tasks[index].runState.phaseLabel = phaseLabel
+        tasks[index].runState.progressHint = nil
+        tasks[index].runState.observationState = .live
+        tasks[index].runState.observationMessage = nil
+        tasks[index].currentSummary = trimmed.count > 180 ? String(trimmed.prefix(180)) + "…" : trimmed
+        tasks[index].output = trimmed
+        tasks[index].availableActions = [.openWorkspace]
+        tasks[index].artifact = nil
+
+        let task = tasks[index]
+        reconcilePendingOutgoingMessages(for: task)
+        rebuildWorkspaceMessagesCache(for: task)
+        refreshTaskTitleIfNeeded(forTaskID: task.taskID)
+        persistClientState()
     }
 
     private func performLiveTaskAction(_ action: TaskAction, task: Task) {
