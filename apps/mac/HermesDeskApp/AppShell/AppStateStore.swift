@@ -182,8 +182,6 @@ final class AppStateStore: ObservableObject {
     private var transcriptMessagesByCacheKey: [TranscriptCacheKey: [HermesConversationMessage]] = [:]
     private var transcriptHasOlderByCacheKey: [TranscriptCacheKey: Bool] = [:]
     private var stableWorkspaceEntryIDsByTaskID: [Task.ID: [WorkspaceMessageFingerprint: String]] = [:]
-    private var transcriptLoadingTaskIDs: Set<Task.ID> = []
-    private var transcriptLoadingOlderTaskIDs: Set<Task.ID> = []
 
     private static let pendingActionTimeout: TimeInterval = 20
     private static let pendingActionReconcileInterval: Duration = .seconds(5)
@@ -197,7 +195,6 @@ final class AppStateStore: ObservableObject {
     private var runEventSessionTokens: [String: UUID] = [:]
     private var liveActionRequestTokens: [Task.ID: UUID] = [:]
     private var pendingActionMonitorTask: Swift.Task<Void, Never>?
-    private var transcriptReconcileMonitorTask: Swift.Task<Void, Never>?
     private var agentReloadTask: Swift.Task<Void, Never>?
     private var transcriptRefreshTask: Swift.Task<Void, Never>?
     private var nextLocalTranscriptMessageID: Int64 = -1
@@ -223,7 +220,6 @@ final class AppStateStore: ObservableObject {
         }
         restorePersistedClientState()
         startPendingActionMonitor()
-        startTranscriptReconcileMonitor()
         if agents.isEmpty {
             scheduleAgentReload(reason: .appLaunch)
         }
@@ -232,7 +228,6 @@ final class AppStateStore: ObservableObject {
     deinit {
         runEventTasks.values.forEach { $0.cancel() }
         pendingActionMonitorTask?.cancel()
-        transcriptReconcileMonitorTask?.cancel()
         agentReloadTask?.cancel()
         transcriptRefreshTask?.cancel()
         runEventSessionTokens.removeAll()
@@ -696,8 +691,6 @@ final class AppStateStore: ObservableObject {
             }
         )
         stableWorkspaceEntryIDsByTaskID = [:]
-        transcriptLoadingTaskIDs = []
-        transcriptLoadingOlderTaskIDs = []
         workspaceMessagesByTaskID = Dictionary(
             uniqueKeysWithValues: filteredTasks.map { task in
                 (task.taskID, buildWorkspaceMessages(for: task))
@@ -773,8 +766,6 @@ final class AppStateStore: ObservableObject {
             taskRuntimeProfileIDs = [:]
             transcriptMessagesByCacheKey = [:]
             transcriptHasOlderByCacheKey = [:]
-            transcriptLoadingTaskIDs = []
-            transcriptLoadingOlderTaskIDs = []
             workspaceMessagesByTaskID = [:]
             pendingOutgoingMessagesByTaskID = [:]
             stableWorkspaceEntryIDsByTaskID = [:]
@@ -787,8 +778,6 @@ final class AppStateStore: ObservableObject {
             self.selectedTaskID = nil
         }
         selectDefaultTaskIfNeeded()
-        transcriptLoadingTaskIDs = []
-        transcriptLoadingOlderTaskIDs = []
         if let selectedTask {
             rebuildWorkspaceMessagesCache(for: selectedTask)
         }
@@ -806,20 +795,18 @@ final class AppStateStore: ObservableObject {
     }
 
     func isTranscriptLoading(for task: Task) -> Bool {
-        transcriptLoadingTaskIDs.contains(task.taskID)
+        false
     }
 
     func isLoadingOlderMessages(for task: Task) -> Bool {
-        transcriptLoadingOlderTaskIDs.contains(task.taskID)
+        false
     }
 
     func canLoadOlderMessages(for task: Task) -> Bool {
         false
     }
 
-    func loadOlderMessages(for taskID: Task.ID) {
-        transcriptLoadingOlderTaskIDs.remove(taskID)
-    }
+    func loadOlderMessages(for taskID: Task.ID) {}
 
     private func buildWorkspaceMessages(for task: Task) -> [HermesConversationMessage] {
         let combinedMessages = taskTranscriptCacheKeys(for: task).flatMap { transcriptMessagesByCacheKey[$0] ?? [] }
@@ -860,38 +847,6 @@ final class AppStateStore: ObservableObject {
                 guard Swift.Task.isCancelled == false else { return }
                 self?.reconcileTimedOutPendingActions()
             }
-        }
-    }
-
-    private func startTranscriptReconcileMonitor() {
-        transcriptReconcileMonitorTask?.cancel()
-        transcriptReconcileMonitorTask = Swift.Task { [weak self] in
-            while Swift.Task.isCancelled == false {
-                try? await Swift.Task.sleep(for: .seconds(2))
-                guard Swift.Task.isCancelled == false else { return }
-                await self?.reconcileVisibleLiveTranscripts()
-            }
-        }
-    }
-
-    private func reconcileVisibleLiveTranscripts() async {
-        let candidateTaskIDs = Set(
-            ([selectedTaskID].compactMap { $0 } + pendingOutgoingMessagesByTaskID.keys)
-                .compactMap { taskID in
-                    tasks.first(where: {
-                        $0.taskID == taskID
-                            && $0.isPreview == false
-                            && ($0.runID != nil || (pendingOutgoingMessagesByTaskID[taskID]?.isEmpty == false))
-                    })?.taskID
-                }
-        )
-
-        guard candidateTaskIDs.isEmpty == false else {
-            return
-        }
-
-        for taskID in candidateTaskIDs {
-            await refreshTranscripts(forTaskID: taskID, force: true)
         }
     }
 

@@ -1570,46 +1570,6 @@ struct DashboardView: View {
         return entries
     }
 
-    private func loadingWorkspaceFeedEntries(for task: Task) -> [WorkspaceFeedEntry] {
-        let pendingEntries = pendingOutgoingEntries(for: task)
-        var entries: [WorkspaceFeedEntry] = [
-            WorkspaceFeedEntry(
-                id: "loading-history-\(task.taskID)",
-                title: appState.text(zh: "正在加载最近聊天记录", en: "Loading recent history"),
-                body: appState.text(
-                    zh: "首次只加载最近一段对话，避免一上来把整段历史全部拉进来。你可以随后手动加载更早消息。",
-                    en: "The workspace loads only the most recent part of the conversation first so it does not block on the full history. You can load earlier messages on demand."
-                ),
-                footer: appState.text(zh: "最近消息优先", en: "Recent messages first"),
-                alignment: .leading,
-                background: Color.secondary.opacity(0.08),
-                tint: .secondary,
-                monospaced: false,
-                showsProgress: true
-            )
-        ]
-
-        if pendingEntries.isEmpty {
-            let requestBody = task.requestText ?? task.title
-            entries.append(
-                WorkspaceFeedEntry(
-                    id: "task-request-\(task.taskID)",
-                    title: "You asked Hermes",
-                    body: requestBody,
-                    footer: task.createdAt.formatted(date: .abbreviated, time: .shortened),
-                    alignment: .trailing,
-                    background: Color.accentColor.opacity(0.16),
-                    tint: .accentColor,
-                    monospaced: false
-                )
-            )
-        } else {
-            entries.append(contentsOf: pendingEntries)
-        }
-
-        return entries
-    }
-
     private func legacyWorkspaceFeedEntries(for task: Task) -> [WorkspaceFeedEntry] {
         let requestBody = task.requestText ?? task.title
         var entries: [WorkspaceFeedEntry] = [
