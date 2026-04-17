@@ -6,6 +6,75 @@ import HermesKit
 
 @MainActor
 final class AppStateStoreTests: XCTestCase {
+    func testTaskCacheStoreUsesEphemeralModeForXcodeHostedLaunches() {
+        XCTAssertTrue(
+            HermesDeskTaskCacheStore.shouldUseEphemeralStore(
+                environment: ["XCTestSessionIdentifier": "session-1"],
+                arguments: []
+            )
+        )
+        XCTAssertTrue(
+            HermesDeskTaskCacheStore.shouldUseEphemeralStore(
+                environment: [:],
+                arguments: ["-NSDocumentRevisionsDebugMode", "YES"]
+            )
+        )
+        XCTAssertFalse(
+            HermesDeskTaskCacheStore.shouldUseEphemeralStore(
+                environment: [:],
+                arguments: []
+            )
+        )
+    }
+
+    func testHoldingSelectionForNewTaskPreventsAutoSwitchToAnotherLiveTask() {
+        let backend = StubBackend(
+            diagnostics: AgentBackendDiagnostics(
+                adapterName: "Hermes",
+                hermesHomePath: "/tmp/default",
+                environmentFilePath: "/tmp/default/.env",
+                environmentFileExists: true,
+                apiKeyConfigured: true
+            )
+        )
+        let agent = HermesAgentDescriptor(
+            agentID: "alpha01",
+            displayName: "Alpha",
+            roleSummary: nil,
+            runtimeProfileID: "alpha01",
+            runtimeProfile: HermesProfileDescriptor(
+                profileID: "alpha01",
+                displayName: "alpha01",
+                hermesHomePath: "/tmp/profile",
+                environmentFilePath: "/tmp/profile/.env",
+                environmentFileExists: false
+            )
+        )
+        let store = AppStateStore(backend: backend, initialAgents: [agent], initialBackendsByRuntimeProfileID: [:])
+        store.tasks = [
+            Task.liveHermesTask(
+                taskID: "alpha01:existing-running",
+                title: "Existing task",
+                input: "old",
+                runID: "run_existing",
+                sessionID: "hermes-desk-alpha01-existing",
+                agentID: "alpha01"
+            )
+        ]
+
+        store.holdSelectionForNewTask()
+        XCTAssertTrue(store.isHoldingNewTaskSelection)
+        XCTAssertNil(store.selectedTask)
+
+        var refreshedTasks = store.tasks
+        refreshedTasks[0].updatedAt = Date().addingTimeInterval(5)
+        refreshedTasks[0].currentSummary = "Streaming output from Hermes"
+        store.tasks = refreshedTasks
+
+        XCTAssertTrue(store.isHoldingNewTaskSelection)
+        XCTAssertNil(store.selectedTask)
+    }
+
     func testManagedAgentIDUsesSessionPrefixInsteadOfPromptText() {
         let agents = [
             HermesAgentDescriptor(
@@ -236,7 +305,7 @@ final class AppStateStoreTests: XCTestCase {
         let task = try XCTUnwrap(store.tasks.first)
         XCTAssertFalse(store.isTranscriptLoading(for: task))
         XCTAssertEqual(store.pendingOutgoingMessages(for: task).map(\.content), ["整体检查下这个项目目前的进展"])
-        XCTAssertTrue(store.transcriptMessages(for: task).isEmpty)
+        XCTAssertEqual(store.transcriptMessages(for: task).map(\.displayText), ["整体检查下这个项目目前的进展"])
     }
 
     func testStartHermesTaskSecondSendUsesSameSessionForSameTask() async throws {
@@ -470,7 +539,7 @@ final class AppStateStoreTests: XCTestCase {
         let pendingMessage = try XCTUnwrap(store.pendingOutgoingMessages(for: taskBeforePersist).first)
         let optimisticEntryID = store.stableWorkspaceEntryID(for: pendingMessage, taskID: taskID)
         try await Swift.Task.sleep(nanoseconds: 50_000_000)
-        await store.refreshTranscriptsForTesting(taskID: taskID)
+        await store.refreshWorkspaceStateForTesting(taskID: taskID)
 
         let taskAfterPersist = try XCTUnwrap(store.tasks.first(where: { $0.taskID == taskID }))
         XCTAssertTrue(store.pendingOutgoingMessages(for: taskAfterPersist).isEmpty)
@@ -518,7 +587,7 @@ final class AppStateStoreTests: XCTestCase {
         XCTAssertEqual(Set(backend.startedRunRequests.compactMap(\.sessionID)).count, 1)
     }
 
-    func testRefreshTranscriptsReconcilesAPIServerAssistantReplyEvenWhenItLooksLikeProgress() async throws {
+    func testRefreshWorkspaceStateReconcilesAPIServerAssistantReplyEvenWhenItLooksLikeProgress() async throws {
         let backend = StubBackend(
             diagnostics: AgentBackendDiagnostics(
                 adapterName: "Hermes",
@@ -573,10 +642,9 @@ final class AppStateStoreTests: XCTestCase {
             .init(
                 tasks: [task],
                 taskRuntimeProfileIDs: [task.taskID: "alpha01"],
-                transcriptEntries: [
+                workspaceEntries: [
                     .init(
-                        runtimeProfileID: "alpha01",
-                        sessionID: sessionID,
+                        taskID: task.taskID,
                         messages: [
                             HermesConversationMessage(
                                 id: 1,
@@ -592,8 +660,7 @@ final class AppStateStoreTests: XCTestCase {
                                 content: assistantReply,
                                 timestamp: now.addingTimeInterval(1)
                             )
-                        ],
-                        hasMoreBefore: false
+                        ]
                     )
                 ],
                 pendingEntries: []
@@ -608,7 +675,7 @@ final class AppStateStoreTests: XCTestCase {
         )
         let taskID = try XCTUnwrap(store.tasks.first?.taskID)
 
-        await store.refreshTranscriptsForTesting(taskID: taskID)
+        await store.refreshWorkspaceStateForTesting(taskID: taskID)
 
         let updatedTask = try XCTUnwrap(store.tasks.first(where: { $0.taskID == taskID }))
         XCTAssertNil(updatedTask.runID)
@@ -664,6 +731,75 @@ final class AppStateStoreTests: XCTestCase {
         let restoredTask = try XCTUnwrap(restoredStore.tasks.first)
         XCTAssertEqual(restoredTask.requestText, "restore me")
         XCTAssertEqual(restoredStore.transcriptMessages(for: restoredTask).map(\.displayText), ["restore me", "restored reply"])
+    }
+
+    func testRestoresRunningTaskFromLightweightClientOwnedState() async throws {
+        let backend = StubBackend(
+            diagnostics: AgentBackendDiagnostics(
+                adapterName: "Hermes",
+                hermesHomePath: "/tmp/default",
+                environmentFilePath: "/tmp/default/.env",
+                environmentFileExists: true,
+                apiKeyConfigured: true
+            )
+        )
+        let agent = HermesAgentDescriptor(
+            agentID: "alpha01",
+            displayName: "Alpha",
+            roleSummary: nil,
+            runtimeProfileID: "alpha01",
+            runtimeProfile: HermesProfileDescriptor(
+                profileID: "alpha01",
+                displayName: "alpha01",
+                hermesHomePath: "/tmp/profile",
+                environmentFilePath: "/tmp/profile/.env",
+                environmentFileExists: false
+            )
+        )
+        let cacheURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        let cacheStore = HermesDeskTaskCacheStore(fileURL: cacheURL)
+        let firstStore = AppStateStore(
+            backend: backend,
+            initialAgents: [agent],
+            initialBackendsByRuntimeProfileID: [:],
+            taskCacheStore: cacheStore
+        )
+        try await firstStore.startHermesTask(title: nil, prompt: "苏州今天的问题", continuingTaskID: nil)
+        let taskID = try XCTUnwrap(firstStore.tasks.first?.taskID)
+
+        let restoredStore = AppStateStore(
+            backend: backend,
+            initialAgents: [agent],
+            initialBackendsByRuntimeProfileID: [:],
+            taskCacheStore: cacheStore
+        )
+
+        let restoredTask = try XCTUnwrap(restoredStore.tasks.first(where: { $0.taskID == taskID }))
+        XCTAssertEqual(restoredTask.runID, "run_1")
+        XCTAssertEqual(restoredStore.pendingOutgoingMessages(for: restoredTask).map(\.content), ["苏州今天的问题"])
+        XCTAssertEqual(restoredStore.transcriptMessages(for: restoredTask).map(\.displayText), ["苏州今天的问题"])
+        XCTAssertEqual(restoredStore.selectedTaskID, taskID)
+    }
+
+    func testLegacyCacheSchemaIsDeletedInsteadOfRestored() throws {
+        let cacheURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        let legacyPayload = """
+        {
+          "tasks": [],
+          "taskRuntimeProfileIDs": {},
+          "transcriptEntries": [],
+          "pendingEntries": []
+        }
+        """
+        try legacyPayload.data(using: .utf8)?.write(to: cacheURL)
+
+        let cacheStore = HermesDeskTaskCacheStore(fileURL: cacheURL)
+        XCTAssertNil(cacheStore.load())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cacheURL.path))
     }
 
 }

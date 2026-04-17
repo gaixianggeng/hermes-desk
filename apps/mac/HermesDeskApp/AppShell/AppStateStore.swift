@@ -3,13 +3,34 @@ import AppKit
 import HermesKit
 import SwiftUI
 
+private enum HermesDeskRunObservationLog {
+    static func append(_ message: String) {
+        let supportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+                .appending(path: "Library/Application Support", directoryHint: .isDirectory)
+        let directoryURL = supportURL.appending(path: "HermesDesk", directoryHint: .isDirectory)
+        let fileURL = directoryURL.appending(path: "run-events-debug.log")
+        let line = "[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n"
+        do {
+            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+            if FileManager.default.fileExists(atPath: fileURL.path) == false {
+                try line.data(using: .utf8)?.write(to: fileURL)
+            } else if let handle = try? FileHandle(forWritingTo: fileURL) {
+                try handle.seekToEnd()
+                try handle.write(contentsOf: Data(line.utf8))
+                try handle.close()
+            }
+        } catch {
+            return
+        }
+    }
+}
+
 struct HermesDeskTaskCacheStore {
     struct State: Codable, Equatable {
-        struct TranscriptEntry: Codable, Equatable {
-            let runtimeProfileID: String
-            let sessionID: String
+        struct WorkspaceEntry: Codable, Equatable {
+            let taskID: String
             let messages: [HermesConversationMessage]
-            let hasMoreBefore: Bool
         }
 
         struct PendingEntry: Codable, Equatable {
@@ -26,8 +47,43 @@ struct HermesDeskTaskCacheStore {
 
         let tasks: [Task]
         let taskRuntimeProfileIDs: [String: String]
-        let transcriptEntries: [TranscriptEntry]
+        let workspaceEntries: [WorkspaceEntry]
         let pendingEntries: [PendingEntry]
+
+        private enum CodingKeys: String, CodingKey {
+            case tasks
+            case taskRuntimeProfileIDs
+            case workspaceEntries
+            case pendingEntries
+        }
+
+        init(
+            tasks: [Task],
+            taskRuntimeProfileIDs: [String: String],
+            workspaceEntries: [WorkspaceEntry],
+            pendingEntries: [PendingEntry]
+        ) {
+            self.tasks = tasks
+            self.taskRuntimeProfileIDs = taskRuntimeProfileIDs
+            self.workspaceEntries = workspaceEntries
+            self.pendingEntries = pendingEntries
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            tasks = try container.decode([Task].self, forKey: .tasks)
+            taskRuntimeProfileIDs = try container.decode([String: String].self, forKey: .taskRuntimeProfileIDs)
+            workspaceEntries = try container.decode([WorkspaceEntry].self, forKey: .workspaceEntries)
+            pendingEntries = try container.decodeIfPresent([PendingEntry].self, forKey: .pendingEntries) ?? []
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(tasks, forKey: .tasks)
+            try container.encode(taskRuntimeProfileIDs, forKey: .taskRuntimeProfileIDs)
+            try container.encode(workspaceEntries, forKey: .workspaceEntries)
+            try container.encode(pendingEntries, forKey: .pendingEntries)
+        }
     }
 
     private let fileURL: URL?
@@ -38,9 +94,13 @@ struct HermesDeskTaskCacheStore {
 
     static func defaultForEnvironment(
         fileManager: FileManager = .default,
-        processInfo: ProcessInfo = .processInfo
+        processInfo: ProcessInfo = .processInfo,
+        environment: [String: String]? = nil,
+        arguments: [String]? = nil
     ) -> HermesDeskTaskCacheStore {
-        if processInfo.environment["XCTestConfigurationFilePath"] != nil {
+        let resolvedEnvironment = environment ?? processInfo.environment
+        let resolvedArguments = arguments ?? processInfo.arguments
+        if shouldUseEphemeralStore(environment: resolvedEnvironment, arguments: resolvedArguments) {
             return HermesDeskTaskCacheStore(fileURL: nil)
         }
 
@@ -53,6 +113,23 @@ struct HermesDeskTaskCacheStore {
         return HermesDeskTaskCacheStore(fileURL: fileURL)
     }
 
+    static func shouldUseEphemeralStore(
+        environment: [String: String],
+        arguments: [String]
+    ) -> Bool {
+        if environment["XCTestConfigurationFilePath"] != nil
+            || environment["XCTestSessionIdentifier"] != nil
+            || environment["XCInjectBundleInto"] != nil {
+            return true
+        }
+
+        if arguments.contains("-NSDocumentRevisionsDebugMode") {
+            return true
+        }
+
+        return false
+    }
+
     func load() -> State? {
         guard let fileURL,
               let data = try? Data(contentsOf: fileURL) else {
@@ -62,6 +139,7 @@ struct HermesDeskTaskCacheStore {
         do {
             return try JSONDecoder.hermesDeskCacheDecoder.decode(State.self, from: data)
         } catch {
+            try? FileManager.default.removeItem(at: fileURL)
             return nil
         }
     }
@@ -117,10 +195,7 @@ extension JSONDecoder {
 
 @MainActor
 final class AppStateStore: ObservableObject {
-    private struct TranscriptCacheKey: Hashable {
-        var runtimeProfileID: String
-        var sessionID: String
-    }
+    private static let newTaskSelectionSentinel = "__new_task__"
 
     struct PendingOutgoingMessage: Equatable, Sendable, Identifiable {
         let id: UUID
@@ -162,7 +237,9 @@ final class AppStateStore: ObservableObject {
     }
     @Published var tasks: [Task] = [] {
         didSet {
-            if let selectedTaskID, tasks.contains(where: { $0.taskID == selectedTaskID }) == false {
+            if let selectedTaskID,
+               selectedTaskID != Self.newTaskSelectionSentinel,
+               tasks.contains(where: { $0.taskID == selectedTaskID }) == false {
                 self.selectedTaskID = nil
             }
             pendingOutgoingMessagesByTaskID = pendingOutgoingMessagesByTaskID.filter { taskID, _ in
@@ -179,8 +256,6 @@ final class AppStateStore: ObservableObject {
     @Published var taskActionFeedback: String?
     @Published private(set) var workspaceMessagesByTaskID: [Task.ID: [HermesConversationMessage]] = [:]
     @Published private(set) var pendingOutgoingMessagesByTaskID: [Task.ID: [PendingOutgoingMessage]] = [:]
-    private var transcriptMessagesByCacheKey: [TranscriptCacheKey: [HermesConversationMessage]] = [:]
-    private var transcriptHasOlderByCacheKey: [TranscriptCacheKey: Bool] = [:]
     private var stableWorkspaceEntryIDsByTaskID: [Task.ID: [WorkspaceMessageFingerprint: String]] = [:]
 
     private static let pendingActionTimeout: TimeInterval = 20
@@ -196,7 +271,11 @@ final class AppStateStore: ObservableObject {
     private var liveActionRequestTokens: [Task.ID: UUID] = [:]
     private var pendingActionMonitorTask: Swift.Task<Void, Never>?
     private var agentReloadTask: Swift.Task<Void, Never>?
-    private var transcriptRefreshTask: Swift.Task<Void, Never>?
+    private var deferredPersistenceTask: Swift.Task<Void, Never>?
+    private var bufferedStreamingDeltasByTaskID: [Task.ID: String] = [:]
+    private var bufferedStreamingTimestampsByTaskID: [Task.ID: Date] = [:]
+    private var streamingFlushTasksByTaskID: [Task.ID: Swift.Task<Void, Never>] = [:]
+    private var streamingDeltaMetricsByTaskID: [Task.ID: (count: Int, chars: Int)] = [:]
     private var nextLocalTranscriptMessageID: Int64 = -1
 
     init(
@@ -229,7 +308,8 @@ final class AppStateStore: ObservableObject {
         runEventTasks.values.forEach { $0.cancel() }
         pendingActionMonitorTask?.cancel()
         agentReloadTask?.cancel()
-        transcriptRefreshTask?.cancel()
+        deferredPersistenceTask?.cancel()
+        streamingFlushTasksByTaskID.values.forEach { $0.cancel() }
         runEventSessionTokens.removeAll()
     }
 
@@ -522,6 +602,10 @@ final class AppStateStore: ObservableObject {
         return tasks.first { $0.taskID == selectedTaskID }
     }
 
+    var isHoldingNewTaskSelection: Bool {
+        selectedTaskID == Self.newTaskSelectionSentinel
+    }
+
     var runningCount: Int { runningTasks.count }
     var openCount: Int { openTasks.count }
     var queuedCount: Int { queuedTasks.count }
@@ -596,12 +680,14 @@ final class AppStateStore: ObservableObject {
         beginTranscriptLoadIfNeeded(for: task)
     }
 
+    func holdSelectionForNewTask() {
+        selectedTaskID = Self.newTaskSelectionSentinel
+        taskActionFeedback = nil
+    }
+
     private func beginTranscriptLoadIfNeeded(for task: Task, force: Bool = false) {
         guard task.isPreview == false else { return }
-        let cacheKeys = taskTranscriptCacheKeys(for: task)
-        guard cacheKeys.isEmpty == false else { return }
-
-        let shouldRebuild = force || cacheKeys.contains { transcriptMessagesByCacheKey[$0] != nil }
+        let shouldRebuild = force || workspaceMessagesByTaskID[task.taskID] != nil
         guard shouldRebuild else { return }
 
         rebuildWorkspaceMessagesCache(for: task)
@@ -609,6 +695,7 @@ final class AppStateStore: ObservableObject {
     }
 
     func selectDefaultTaskIfNeeded() {
+        guard isHoldingNewTaskSelection == false else { return }
         guard selectedTask == nil else { return }
         guard let task = prioritizedTasks.first else {
             selectedTaskID = nil
@@ -657,22 +744,9 @@ final class AppStateStore: ObservableObject {
 
         tasks = filteredTasks
         taskRuntimeProfileIDs = persistedState.taskRuntimeProfileIDs.filter { validTaskIDs.contains($0.key) }
-
-        transcriptMessagesByCacheKey = Dictionary(
-            uniqueKeysWithValues: persistedState.transcriptEntries.map { entry in
-                (
-                    TranscriptCacheKey(runtimeProfileID: entry.runtimeProfileID, sessionID: entry.sessionID),
-                    entry.messages
-                )
-            }
-        )
-        transcriptHasOlderByCacheKey = Dictionary(
-            uniqueKeysWithValues: persistedState.transcriptEntries.map { entry in
-                (
-                    TranscriptCacheKey(runtimeProfileID: entry.runtimeProfileID, sessionID: entry.sessionID),
-                    entry.hasMoreBefore
-                )
-            }
+        workspaceMessagesByTaskID = restoredWorkspaceMessages(
+            from: persistedState.workspaceEntries,
+            tasks: filteredTasks
         )
         pendingOutgoingMessagesByTaskID = Dictionary(
             uniqueKeysWithValues: persistedState.pendingEntries.compactMap { entry in
@@ -691,13 +765,18 @@ final class AppStateStore: ObservableObject {
             }
         )
         stableWorkspaceEntryIDsByTaskID = [:]
+        for task in filteredTasks {
+            for pendingMessage in pendingOutgoingMessagesByTaskID[task.taskID] ?? [] {
+                materializePendingOutgoingMessage(pendingMessage, for: task)
+            }
+        }
         workspaceMessagesByTaskID = Dictionary(
             uniqueKeysWithValues: filteredTasks.map { task in
-                (task.taskID, buildWorkspaceMessages(for: task))
+                (task.taskID, normalizedWorkspaceMessages(workspaceMessagesByTaskID[task.taskID] ?? []))
             }
         )
 
-        let minimumLocalID = transcriptMessagesByCacheKey
+        let minimumLocalID = workspaceMessagesByTaskID
             .values
             .flatMap { $0 }
             .map(\.id)
@@ -709,19 +788,16 @@ final class AppStateStore: ObservableObject {
     private func persistClientState() {
         let persistedTasks = tasks.filter { $0.isPreview == false }
         let taskIDs = Set(persistedTasks.map(\.taskID))
-        let validCacheKeys = Set(persistedTasks.flatMap(taskTranscriptCacheKeys(for:)))
         let state = HermesDeskTaskCacheStore.State(
             tasks: persistedTasks,
             taskRuntimeProfileIDs: taskRuntimeProfileIDs.filter { taskIDs.contains($0.key) },
-            transcriptEntries: transcriptMessagesByCacheKey.compactMap { cacheKey, messages in
-                guard validCacheKeys.contains(cacheKey) else {
+            workspaceEntries: workspaceMessagesByTaskID.compactMap { taskID, messages in
+                guard taskIDs.contains(taskID), messages.isEmpty == false else {
                     return nil
                 }
-                return HermesDeskTaskCacheStore.State.TranscriptEntry(
-                    runtimeProfileID: cacheKey.runtimeProfileID,
-                    sessionID: cacheKey.sessionID,
-                    messages: messages,
-                    hasMoreBefore: transcriptHasOlderByCacheKey[cacheKey] ?? false
+                return HermesDeskTaskCacheStore.State.WorkspaceEntry(
+                    taskID: taskID,
+                    messages: normalizedWorkspaceMessages(messages)
                 )
             },
             pendingEntries: pendingOutgoingMessagesByTaskID.compactMap { taskID, messages in
@@ -744,6 +820,88 @@ final class AppStateStore: ObservableObject {
         taskCacheStore.save(state)
     }
 
+    private func scheduleDeferredPersistence(after delay: Duration = .milliseconds(200)) {
+        deferredPersistenceTask?.cancel()
+        deferredPersistenceTask = Swift.Task { [weak self] in
+            try? await Swift.Task.sleep(for: delay)
+            guard Swift.Task.isCancelled == false else { return }
+            await MainActor.run {
+                self?.persistClientState()
+            }
+        }
+    }
+
+    private func bufferStreamingDelta(_ delta: String, timestamp: Date, for taskID: Task.ID) {
+        bufferedStreamingDeltasByTaskID[taskID, default: ""] += delta
+        bufferedStreamingTimestampsByTaskID[taskID] = timestamp
+        streamingDeltaMetricsByTaskID[taskID, default: (0, 0)].count += 1
+        streamingDeltaMetricsByTaskID[taskID, default: (0, 0)].chars += delta.count
+
+        guard streamingFlushTasksByTaskID[taskID] == nil else {
+            return
+        }
+
+        streamingFlushTasksByTaskID[taskID] = Swift.Task { [weak self] in
+            try? await Swift.Task.sleep(for: .milliseconds(120))
+            guard Swift.Task.isCancelled == false else { return }
+            await MainActor.run {
+                self?.flushBufferedStreamingDelta(for: taskID)
+            }
+        }
+    }
+
+    private func flushBufferedStreamingDelta(for taskID: Task.ID, logMetrics: Bool = true) {
+        streamingFlushTasksByTaskID[taskID]?.cancel()
+        streamingFlushTasksByTaskID[taskID] = nil
+
+        guard let delta = bufferedStreamingDeltasByTaskID.removeValue(forKey: taskID),
+              delta.isEmpty == false,
+              let timestamp = bufferedStreamingTimestampsByTaskID.removeValue(forKey: taskID),
+              let index = tasks.firstIndex(where: { $0.taskID == taskID }) else {
+            streamingDeltaMetricsByTaskID.removeValue(forKey: taskID)
+            return
+        }
+
+        tasks[index].updatedAt = timestamp
+        tasks[index].runState.lastEventAt = timestamp
+        tasks[index].pendingAction = nil
+        tasks[index].pendingActionStartedAt = nil
+        tasks[index].runState.state = .running
+        tasks[index].runState.phaseLabel = "Streaming output"
+        tasks[index].runState.failureCategory = nil
+        tasks[index].runState.failureMessage = nil
+        tasks[index].runState.waitingReason = nil
+        tasks[index].runState.observationState = .live
+        tasks[index].runState.observationMessage = nil
+        tasks[index].availableActions = [.stop, .openWorkspace]
+        tasks[index].output += delta
+        tasks[index].currentSummary = tasks[index].latestOutputSummary ?? "Streaming output from Hermes"
+        tasks[index].runState.progressHint = tasks[index].latestOutputSummary
+
+        if let sessionID = tasks[index].effectiveSessionID {
+            let content = tasks[index].output.trimmingCharacters(in: .whitespacesAndNewlines)
+            if content.isEmpty == false {
+                upsertStreamingAssistantMessage(
+                    for: taskID,
+                    sessionID: sessionID,
+                    content: content,
+                    timestamp: timestamp
+                )
+            }
+        }
+
+        if logMetrics, let metrics = streamingDeltaMetricsByTaskID.removeValue(forKey: taskID) {
+            HermesDeskRunObservationLog.append(
+                "delta batch task=\(taskID) chunks=\(metrics.count) chars=\(metrics.chars)"
+            )
+        }
+
+        let task = tasks[index]
+        reconcilePendingOutgoingMessages(for: task)
+        rebuildWorkspaceMessagesCache(for: task)
+        scheduleDeferredPersistence()
+    }
+
     private func nextLocalMessageID() -> Int64 {
         defer { nextLocalTranscriptMessageID -= 1 }
         return nextLocalTranscriptMessageID
@@ -751,7 +909,6 @@ final class AppStateStore: ObservableObject {
 
     private func scheduleAgentReload(reason: SubscriptionRestoreReason) {
         agentReloadTask?.cancel()
-        transcriptRefreshTask?.cancel()
         let availableAgents = agents
         agentReloadTask = Swift.Task { [weak self] in
             await self?.reloadTasksForAgents(availableAgents)
@@ -764,8 +921,6 @@ final class AppStateStore: ObservableObject {
         guard availableAgents.isEmpty == false else {
             tasks = []
             taskRuntimeProfileIDs = [:]
-            transcriptMessagesByCacheKey = [:]
-            transcriptHasOlderByCacheKey = [:]
             workspaceMessagesByTaskID = [:]
             pendingOutgoingMessagesByTaskID = [:]
             stableWorkspaceEntryIDsByTaskID = [:]
@@ -787,7 +942,7 @@ final class AppStateStore: ObservableObject {
         if let cachedMessages = workspaceMessagesByTaskID[task.taskID] {
             return cachedMessages
         }
-        return buildWorkspaceMessages(for: task)
+        return []
     }
 
     func pendingOutgoingMessages(for task: Task) -> [PendingOutgoingMessage] {
@@ -809,8 +964,34 @@ final class AppStateStore: ObservableObject {
     func loadOlderMessages(for taskID: Task.ID) {}
 
     private func buildWorkspaceMessages(for task: Task) -> [HermesConversationMessage] {
-        let combinedMessages = taskTranscriptCacheKeys(for: task).flatMap { transcriptMessagesByCacheKey[$0] ?? [] }
-        let deduplicatedMessages = Dictionary(grouping: combinedMessages, by: workspaceMessageFingerprint(for:))
+        normalizedWorkspaceMessages(workspaceMessagesByTaskID[task.taskID] ?? [])
+    }
+
+    private func rebuildWorkspaceMessagesCache(for task: Task) {
+        var nextCache = workspaceMessagesByTaskID
+        nextCache[task.taskID] = buildWorkspaceMessages(for: task)
+        workspaceMessagesByTaskID = nextCache
+    }
+
+    private func restoredWorkspaceMessages(
+        from entries: [HermesDeskTaskCacheStore.State.WorkspaceEntry],
+        tasks: [Task]
+    ) -> [Task.ID: [HermesConversationMessage]] {
+        var messagesByTaskID: [Task.ID: [HermesConversationMessage]] = [:]
+        let tasksByID = Dictionary(uniqueKeysWithValues: tasks.map { ($0.taskID, $0) })
+
+        for entry in entries {
+            guard tasksByID[entry.taskID] != nil else {
+                continue
+            }
+            messagesByTaskID[entry.taskID, default: []].append(contentsOf: entry.messages)
+        }
+
+        return messagesByTaskID.mapValues(normalizedWorkspaceMessages)
+    }
+
+    private func normalizedWorkspaceMessages(_ messages: [HermesConversationMessage]) -> [HermesConversationMessage] {
+        let deduplicatedMessages = Dictionary(grouping: messages, by: workspaceMessageFingerprint(for:))
             .values
             .compactMap { groupedMessages in
                 groupedMessages.max { lhs, rhs in
@@ -831,12 +1012,6 @@ final class AppStateStore: ObservableObject {
                 }
                 return lhs.id < rhs.id
             }
-    }
-
-    private func rebuildWorkspaceMessagesCache(for task: Task) {
-        var nextCache = workspaceMessagesByTaskID
-        nextCache[task.taskID] = buildWorkspaceMessages(for: task)
-        workspaceMessagesByTaskID = nextCache
     }
 
     private func startPendingActionMonitor() {
@@ -882,57 +1057,12 @@ final class AppStateStore: ObservableObject {
         }
     }
 
-    private func preloadVisibleTranscripts() async {
-        let taskIDs = [selectedTaskID ?? liveTasks.first?.taskID].compactMap { $0 }
-        for taskID in taskIDs {
-            await refreshTranscripts(forTaskID: taskID)
-        }
-    }
-
-    private func runtimeProfileID(for task: Task) -> String {
-        taskRuntimeProfileIDs[task.taskID] ?? resolvedRuntimeProfileID(forAgentID: task.agentID)
-    }
-
-    private func taskSessionIDs(for task: Task) -> [String] {
-        let orderedSessionIDs = task.sessionLineage.map(\.sessionID)
-        return orderedSessionIDs.isEmpty
-            ? task.effectiveSessionID.map { [$0] } ?? []
-            : orderedSessionIDs
-    }
-
-    private func taskTranscriptCacheKeys(for task: Task) -> [TranscriptCacheKey] {
-        let sessionIDs = taskSessionIDs(for: task)
-        guard sessionIDs.isEmpty == false else {
-            return []
-        }
-
-        var runtimeProfileIDs = [runtimeProfileID(for: task)]
-        if task.normalizedSessionSource != "api_server",
-           runtimeProfileIDs.contains(Self.defaultRuntimeProfileID) == false {
-            runtimeProfileIDs.append(Self.defaultRuntimeProfileID)
-        }
-
-        var keys: [TranscriptCacheKey] = []
-        keys.reserveCapacity(runtimeProfileIDs.count * sessionIDs.count)
-        for runtimeProfileID in runtimeProfileIDs {
-            for sessionID in sessionIDs {
-                keys.append(TranscriptCacheKey(runtimeProfileID: runtimeProfileID, sessionID: sessionID))
-            }
-        }
-        return keys
-    }
-
-    private func mergeTranscriptMessages(
+    private func mergeWorkspaceMessages(
         _ incomingMessages: [HermesConversationMessage],
-        into cacheKey: TranscriptCacheKey
+        intoTaskID taskID: Task.ID
     ) {
-        let existingMessages = transcriptMessagesByCacheKey[cacheKey] ?? []
-        // Retain ALL existing messages — positive-ID (server-fetched) and negative-ID (locally
-        // created during streaming). Discarding negative-ID messages here would wipe assistant
-        // streaming messages whenever a new user message is materialized.
-        let retainedExistingMessages = existingMessages
-
-        let merged = (retainedExistingMessages + incomingMessages)
+        let existingMessages = workspaceMessagesByTaskID[taskID] ?? []
+        let merged = (existingMessages + incomingMessages)
             .sorted { lhs, rhs in
                 if lhs.timestamp != rhs.timestamp {
                     return lhs.timestamp < rhs.timestamp
@@ -947,34 +1077,43 @@ final class AppStateStore: ObservableObject {
             deduplicated.append(message)
         }
 
-        transcriptMessagesByCacheKey[cacheKey] = deduplicated
-    }
-
-    private func primaryTranscriptCacheKey(for task: Task, sessionID: String? = nil) -> TranscriptCacheKey? {
-        let resolvedSessionID = sessionID ?? task.effectiveSessionID
-        guard let resolvedSessionID,
-              resolvedSessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
-            return nil
-        }
-        return TranscriptCacheKey(
-            runtimeProfileID: runtimeProfileID(for: task),
-            sessionID: resolvedSessionID
-        )
+        workspaceMessagesByTaskID[taskID] = normalizedWorkspaceMessages(deduplicated)
     }
 
     private func appendTranscriptMessageIfNeeded(_ message: HermesConversationMessage, for task: Task) {
-        guard let cacheKey = primaryTranscriptCacheKey(for: task, sessionID: message.sessionID) else {
-            return
-        }
-
-        let existingMessages = transcriptMessagesByCacheKey[cacheKey] ?? []
+        let existingMessages = workspaceMessagesByTaskID[task.taskID] ?? []
         let fingerprint = workspaceMessageFingerprint(for: message)
         if existingMessages.contains(where: { workspaceMessageFingerprint(for: $0) == fingerprint }) {
             return
         }
 
-        mergeTranscriptMessages([message], into: cacheKey)
-        transcriptHasOlderByCacheKey[cacheKey] = false
+        mergeWorkspaceMessages([message], intoTaskID: task.taskID)
+    }
+
+    private func materializePendingOutgoingMessage(
+        _ pendingMessage: PendingOutgoingMessage,
+        for task: Task
+    ) {
+        let optimisticMessage = HermesConversationMessage(
+            id: nextLocalMessageID(),
+            sessionID: pendingMessage.sessionID,
+            role: .user,
+            content: pendingMessage.content,
+            timestamp: pendingMessage.timestamp
+        )
+        let pendingFingerprint = workspaceMessageFingerprint(for: pendingMessage)
+        let messageFingerprint = workspaceMessageFingerprint(for: optimisticMessage)
+        let aliasID = "pending-outgoing-\(pendingMessage.id.uuidString)"
+
+        var stableEntryIDs = stableWorkspaceEntryIDsByTaskID[task.taskID] ?? [:]
+        stableEntryIDs[pendingFingerprint] = aliasID
+        stableEntryIDs[messageFingerprint] = aliasID
+        stableWorkspaceEntryIDsByTaskID[task.taskID] = stableEntryIDs
+
+        let existingMessages = workspaceMessagesByTaskID[task.taskID] ?? []
+        if existingMessages.contains(where: { workspaceMessageFingerprint(for: $0) == messageFingerprint }) == false {
+            mergeWorkspaceMessages([optimisticMessage], intoTaskID: task.taskID)
+        }
     }
 
     private func materializePendingOutgoingMessages(for taskID: Task.ID) {
@@ -983,16 +1122,7 @@ final class AppStateStore: ObservableObject {
         }
 
         for pendingMessage in pendingOutgoingMessages(for: task) {
-            appendTranscriptMessageIfNeeded(
-                HermesConversationMessage(
-                    id: nextLocalMessageID(),
-                    sessionID: pendingMessage.sessionID,
-                    role: .user,
-                    content: pendingMessage.content,
-                    timestamp: pendingMessage.timestamp
-                ),
-                for: task
-            )
+            materializePendingOutgoingMessage(pendingMessage, for: task)
         }
     }
 
@@ -1002,12 +1132,11 @@ final class AppStateStore: ObservableObject {
         content: String,
         timestamp: Date
     ) {
-        guard let task = tasks.first(where: { $0.taskID == taskID }),
-              let cacheKey = primaryTranscriptCacheKey(for: task, sessionID: sessionID) else {
+        guard tasks.contains(where: { $0.taskID == taskID }) else {
             return
         }
 
-        var messages = transcriptMessagesByCacheKey[cacheKey] ?? []
+        var messages = workspaceMessagesByTaskID[taskID] ?? []
         let adjustedTimestamp: Date
         if let lastTimestamp = messages.last?.timestamp, timestamp <= lastTimestamp {
             adjustedTimestamp = lastTimestamp.addingTimeInterval(0.001)
@@ -1037,13 +1166,7 @@ final class AppStateStore: ObservableObject {
             )
         }
 
-        transcriptMessagesByCacheKey[cacheKey] = messages.sorted { lhs, rhs in
-            if lhs.timestamp != rhs.timestamp {
-                return lhs.timestamp < rhs.timestamp
-            }
-            return lhs.id < rhs.id
-        }
-        transcriptHasOlderByCacheKey[cacheKey] = false
+        workspaceMessagesByTaskID[taskID] = normalizedWorkspaceMessages(messages)
     }
 
     private func workspaceMessageFingerprint(for message: HermesConversationMessage) -> WorkspaceMessageFingerprint {
@@ -1080,7 +1203,7 @@ final class AppStateStore: ObservableObject {
         return stableWorkspaceEntryIDsByTaskID[taskID]?[fingerprint] ?? "pending-outgoing-\(pendingMessage.id.uuidString)"
     }
 
-    private func refreshTranscripts(forTaskID taskID: Task.ID, force: Bool = false) async {
+    private func refreshWorkspaceState(forTaskID taskID: Task.ID, force: Bool = false) async {
         guard let task = tasks.first(where: { $0.taskID == taskID }) else {
             return
         }
@@ -1089,13 +1212,13 @@ final class AppStateStore: ObservableObject {
             materializePendingOutgoingMessages(for: task.taskID)
         }
         reconcilePendingOutgoingMessages(for: task)
-        reconcileCompletedConversationFromTranscript(forTaskID: taskID)
+        reconcileCompletedConversationFromWorkspace(forTaskID: taskID)
         rebuildWorkspaceMessagesCache(for: task)
         refreshTaskTitleIfNeeded(forTaskID: taskID)
         persistClientState()
     }
 
-    private func reconcileCompletedConversationFromTranscript(forTaskID taskID: Task.ID) {
+    private func reconcileCompletedConversationFromWorkspace(forTaskID taskID: Task.ID) {
         guard let index = tasks.firstIndex(where: { $0.taskID == taskID }) else {
             return
         }
@@ -1149,12 +1272,9 @@ final class AppStateStore: ObservableObject {
         var nextPendingMessages = pendingOutgoingMessagesByTaskID
         nextPendingMessages[taskID] = updatedMessages
         pendingOutgoingMessagesByTaskID = nextPendingMessages
-        let fingerprint = workspaceMessageFingerprint(for: message)
-        var stableEntryIDs = stableWorkspaceEntryIDsByTaskID[taskID] ?? [:]
-        stableEntryIDs[fingerprint] = "pending-outgoing-\(message.id.uuidString)"
-        stableWorkspaceEntryIDsByTaskID[taskID] = stableEntryIDs
 
         if let task = tasks.first(where: { $0.taskID == taskID }) {
+            materializePendingOutgoingMessage(message, for: task)
             rebuildWorkspaceMessagesCache(for: task)
         }
         persistClientState()
@@ -1164,14 +1284,7 @@ final class AppStateStore: ObservableObject {
         let pendingMessages = pendingOutgoingMessagesByTaskID[task.taskID] ?? []
         guard pendingMessages.isEmpty == false else { return }
 
-        let cacheKeys = taskTranscriptCacheKeys(for: task)
-        var persistedUserMessages: [HermesConversationMessage] = []
-        for cacheKey in cacheKeys {
-            let cachedMessages = transcriptMessagesByCacheKey[cacheKey] ?? []
-            for message in cachedMessages where message.role == .user {
-                persistedUserMessages.append(message)
-            }
-        }
+        let persistedUserMessages = transcriptMessages(for: task).filter { $0.role == .user }
 
         var persistedUserFingerprintCounts: [PendingOutgoingFingerprint: Int] = [:]
         var persistedUserMessagesByFingerprint: [PendingOutgoingFingerprint: [HermesConversationMessage]] = [:]
@@ -1510,8 +1623,10 @@ final class AppStateStore: ObservableObject {
     private func observeRunEvents(taskID: String, runID: String, sessionToken: UUID) async {
         let maxReconnectAttempts = 3
         var reconnectAttempt = 0
+        HermesDeskRunObservationLog.append("observe start task=\(taskID) run=\(runID) token=\(sessionToken.uuidString)")
 
         defer {
+            HermesDeskRunObservationLog.append("observe end task=\(taskID) run=\(runID) token=\(sessionToken.uuidString)")
             clearRunEventObserver(taskID: taskID, sessionToken: sessionToken)
         }
 
@@ -1529,6 +1644,11 @@ final class AppStateStore: ObservableObject {
                     guard Swift.Task.isCancelled == false else {
                         return
                     }
+                    if event.type != .messageDelta {
+                        HermesDeskRunObservationLog.append(
+                            "event task=\(taskID) run=\(runID) type=\(event.type.rawValue) delta=\((event.delta ?? "").count) output=\((event.output ?? "").count) reasoning=\((event.reasoning ?? "").count)"
+                        )
+                    }
                     apply(event: event, toTaskID: taskID)
                     reconnectAttempt = 0
                 }
@@ -1540,8 +1660,10 @@ final class AppStateStore: ObservableObject {
                 await finalizeStreamClosure(forTaskID: taskID, runID: runID)
                 return
             } catch is CancellationError {
+                HermesDeskRunObservationLog.append("observe cancelled task=\(taskID) run=\(runID)")
                 return
             } catch {
+                HermesDeskRunObservationLog.append("observe error task=\(taskID) run=\(runID) error=\(error.localizedDescription)")
                 guard shouldKeepObserving(taskID: taskID) else {
                     return
                 }
@@ -1567,11 +1689,14 @@ final class AppStateStore: ObservableObject {
     }
 
     private func finalizeStreamClosure(forTaskID taskID: String, runID: String) async {
-        await refreshTranscripts(forTaskID: taskID, force: true)
+        flushBufferedStreamingDelta(for: taskID, logMetrics: true)
+        await refreshWorkspaceState(forTaskID: taskID, force: true)
         guard let index = tasks.firstIndex(where: { $0.taskID == taskID }) else {
+            HermesDeskRunObservationLog.append("finalize missing task task=\(taskID) run=\(runID)")
             return
         }
         guard tasks[index].state.isTerminal == false else {
+            HermesDeskRunObservationLog.append("finalize terminal task=\(taskID) run=\(runID) state=\(tasks[index].state.rawValue)")
             return
         }
 
@@ -1582,6 +1707,9 @@ final class AppStateStore: ObservableObject {
                 .displayText
             ?? tasks[index].output
         ).trimmingCharacters(in: .whitespacesAndNewlines)
+        HermesDeskRunObservationLog.append(
+            "finalize task=\(taskID) run=\(runID) finalText=\(finalText.count) output=\(tasks[index].output.count) workspaceMessages=\(transcriptMessages(for: tasks[index]).count)"
+        )
 
         tasks[index].runID = nil
         tasks[index].pendingAction = nil
@@ -1612,7 +1740,8 @@ final class AppStateStore: ObservableObject {
             return false
         }
 
-        await refreshTranscripts(forTaskID: taskID, force: true)
+        flushBufferedStreamingDelta(for: taskID, logMetrics: true)
+        await refreshWorkspaceState(forTaskID: taskID, force: true)
         if let task = tasks.first(where: { $0.taskID == taskID }), task.runID == nil {
             return false
         }
@@ -1677,6 +1806,14 @@ final class AppStateStore: ObservableObject {
             materializePendingOutgoingMessages(for: taskID)
         }
 
+        if event.type == .messageDelta {
+            if let delta = event.delta, delta.isEmpty == false {
+                bufferStreamingDelta(delta, timestamp: event.timestamp, for: taskID)
+            }
+            return
+        }
+
+        flushBufferedStreamingDelta(for: taskID, logMetrics: false)
         tasks[index].apply(hermesEvent: event)
         if event.type == .runCompleted || event.type == .runFailed || event.type == .runInterrupted {
             tasks[index].runID = nil
@@ -1689,15 +1826,7 @@ final class AppStateStore: ObservableObject {
         if let sessionID {
             switch event.type {
             case .messageDelta:
-                let content = tasks[index].output.trimmingCharacters(in: .whitespacesAndNewlines)
-                if content.isEmpty == false {
-                    upsertStreamingAssistantMessage(
-                        for: taskID,
-                        sessionID: sessionID,
-                        content: content,
-                        timestamp: event.timestamp
-                    )
-                }
+                break
             case .runCompleted:
                 let content = (event.output ?? tasks[index].output).trimmingCharacters(in: .whitespacesAndNewlines)
                 if content.isEmpty == false {
@@ -1713,9 +1842,7 @@ final class AppStateStore: ObservableObject {
                         phaseLabel: text(zh: "对话已更新", en: "Conversation updated")
                     )
                 }
-            case .runFailed, .runInterrupted:
-                break
-            case .reasoningAvailable, .toolStarted, .toolCompleted, .approvalRequested, .approvalResolved, .observationReconnecting, .observationDisconnected:
+            case .runFailed, .runInterrupted, .reasoningAvailable, .toolStarted, .toolCompleted, .approvalRequested, .approvalResolved, .observationReconnecting, .observationDisconnected:
                 break
             }
         }
@@ -1737,12 +1864,20 @@ final class AppStateStore: ObservableObject {
         if sessionID != nil,
            event.type == .runFailed || event.type == .runInterrupted {
             Swift.Task { [weak self] in
-                await self?.refreshTranscripts(forTaskID: taskID, force: true)
+                await self?.refreshWorkspaceState(forTaskID: taskID, force: true)
             }
         } else if let task = tasks.first(where: { $0.taskID == taskID }) {
-            reconcilePendingOutgoingMessages(for: task)
-            rebuildWorkspaceMessagesCache(for: task)
-            persistClientState()
+            switch event.type {
+            case .messageDelta:
+                scheduleDeferredPersistence()
+            case .reasoningAvailable, .toolStarted, .toolCompleted, .approvalRequested, .approvalResolved, .observationReconnecting, .observationDisconnected:
+                rebuildWorkspaceMessagesCache(for: task)
+                scheduleDeferredPersistence()
+            case .runCompleted, .runFailed, .runInterrupted:
+                reconcilePendingOutgoingMessages(for: task)
+                rebuildWorkspaceMessagesCache(for: task)
+                persistClientState()
+            }
         }
     }
 
@@ -2154,8 +2289,8 @@ final class AppStateStore: ObservableObject {
     }
 
     #if DEBUG
-    func refreshTranscriptsForTesting(taskID: Task.ID, force: Bool = true) async {
-        await refreshTranscripts(forTaskID: taskID, force: force)
+    func refreshWorkspaceStateForTesting(taskID: Task.ID, force: Bool = true) async {
+        await refreshWorkspaceState(forTaskID: taskID, force: force)
     }
 
     func materializeAssistantReplyForTesting(
@@ -2164,12 +2299,11 @@ final class AppStateStore: ObservableObject {
         timestamp: Date = .now
     ) {
         guard let index = tasks.firstIndex(where: { $0.taskID == taskID }),
-              let sessionID = tasks[index].effectiveSessionID,
-              let cacheKey = primaryTranscriptCacheKey(for: tasks[index], sessionID: sessionID) else {
+              let sessionID = tasks[index].effectiveSessionID else {
             return
         }
 
-        var messages = transcriptMessagesByCacheKey[cacheKey] ?? []
+        var messages = workspaceMessagesByTaskID[taskID] ?? []
         for pendingMessage in pendingOutgoingMessagesByTaskID[taskID] ?? [] {
             let userMessage = HermesConversationMessage(
                 id: nextLocalMessageID(),
@@ -2200,13 +2334,7 @@ final class AppStateStore: ObservableObject {
                 timestamp: adjustedTimestamp
             )
         )
-        transcriptMessagesByCacheKey[cacheKey] = messages.sorted { lhs, rhs in
-            if lhs.timestamp != rhs.timestamp {
-                return lhs.timestamp < rhs.timestamp
-            }
-            return lhs.id < rhs.id
-        }
-        transcriptHasOlderByCacheKey[cacheKey] = false
+        workspaceMessagesByTaskID[taskID] = normalizedWorkspaceMessages(messages)
         pendingOutgoingMessagesByTaskID.removeValue(forKey: taskID)
         tasks[index].runID = nil
         tasks[index].artifact = nil

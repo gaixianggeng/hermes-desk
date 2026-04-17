@@ -13,13 +13,15 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(path: "../HermesKit")
+        .package(path: "../HermesKit"),
+        .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.0.2")
     ],
     targets: [
         .target(
             name: "AppCore",
             dependencies: [
-                .product(name: "HermesKit", package: "HermesKit")
+                .product(name: "HermesKit", package: "HermesKit"),
+                .product(name: "MarkdownUI", package: "swift-markdown-ui")
             ]
         ),
         .testTarget(

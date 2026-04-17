@@ -117,6 +117,33 @@ final class RunClientTests: XCTestCase {
         XCTAssertEqual(events.last?.usage?.totalTokens, 3)
     }
 
+    func testEventParserFlushesWhenStreamOmitsBlankLinesBetweenEvents() throws {
+        var parser = HermesRunEventStreamParser()
+        let lines = [
+            "data: {\"event\":\"message.delta\",\"run_id\":\"run_123\",\"timestamp\":1710000000.0,\"delta\":\"he\"}",
+            "data: {\"event\":\"message.delta\",\"run_id\":\"run_123\",\"timestamp\":1710000001.0,\"delta\":\"llo\"}",
+            "data: {\"event\":\"run.completed\",\"run_id\":\"run_123\",\"timestamp\":1710000002.0,\"output\":\"hello\"}"
+        ]
+
+        var events: [HermesRunEvent] = []
+        for line in lines {
+            if let event = try parser.consume(line: line) {
+                events.append(event)
+            }
+        }
+        if let event = try parser.finish() {
+            events.append(event)
+        }
+
+        XCTAssertEqual(events.count, 3)
+        XCTAssertEqual(events[0].type, .messageDelta)
+        XCTAssertEqual(events[0].delta, "he")
+        XCTAssertEqual(events[1].type, .messageDelta)
+        XCTAssertEqual(events[1].delta, "llo")
+        XCTAssertEqual(events[2].type, .runCompleted)
+        XCTAssertEqual(events[2].output, "hello")
+    }
+
     func testEventParserParsesApprovalRequestedAndInterruptedEvents() throws {
         var parser = HermesRunEventStreamParser()
         let lines = [
@@ -186,6 +213,29 @@ final class RunClientTests: XCTestCase {
         }
         if let event = try parser.finish() {
             events.append(event)
+        }
+
+        XCTAssertEqual(events.count, 2)
+        XCTAssertEqual(events.first?.type, .messageDelta)
+        XCTAssertEqual(events.first?.delta, "hello")
+        XCTAssertEqual(events.last?.type, .runCompleted)
+        XCTAssertEqual(events.last?.output, "hello")
+    }
+
+    func testEventParserAcceptsLegacyTypeAliases() throws {
+        var parser = HermesRunEventStreamParser()
+        let lines = [
+            "data: {\"type\":\"response.output_text.delta\",\"run_id\":\"run_alias\",\"timestamp\":1710000001.0,\"text\":\"hello\"}",
+            "",
+            "data: {\"type\":\"response.completed\",\"run_id\":\"run_alias\",\"timestamp\":1710000002.0,\"text\":\"hello\"}",
+            ""
+        ]
+
+        var events: [HermesRunEvent] = []
+        for line in lines {
+            if let event = try parser.consume(line: line) {
+                events.append(event)
+            }
         }
 
         XCTAssertEqual(events.count, 2)

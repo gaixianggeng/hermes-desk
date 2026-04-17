@@ -68,11 +68,37 @@ first-phase dependency.
 - Alternative considered: Keep the current placeholder-driven state machine where the final answer appears only after transcript hydration.
 - Why: Placeholders are useful for transparency, but they are not the product. The answer is the product.
 
+### 6. SSE parsing must not depend on blank-line frame separators
+
+- Chosen: Make the Desk SSE parser flush on explicit separators when present, but also tolerate streams where consecutive `data:` lines represent distinct events without intervening blank lines.
+- Alternative considered: Assume URLSession line iteration will always preserve SSE blank lines exactly as the server wrote them.
+- Why: Real Hermes gateway runs proved that valid `message.delta` / `run.completed` payloads could still be lost when the client-side line stream omitted expected blank separators. The parser has to be robust to transport quirks, not just spec-perfect framing.
+
+### 7. Xcode-hosted Desk instances must not share the real user cache
+
+- Chosen: Route test-hosted or Xcode-launched Desk processes to an ephemeral cache store.
+- Alternative considered: Keep all local Desk processes pointed at the same Application Support cache file.
+- Why: During debugging, multiple Xcode-hosted Desk instances could overwrite the same `task-cache.json`, obscuring whether a live run actually failed or whether a second process simply rewrote the local state.
+
+### 8. Full transcript mode should include task event replay, and Inspector should merge “Now” + “Progress”
+
+- Chosen: In the phase-1 debugging posture, the workspace full transcript includes task event replay (tool/log/status/approval/error events) alongside user and assistant messages, and the Inspector combines the former “Progress” content under the “Now” tab.
+- Alternative considered: Keep tool/log/progress details isolated behind a separate Inspector tab and keep the center transcript limited to user/assistant messages only.
+- Why: Telegram-style debugging makes the full call chain visible inline. Putting the event trail in the same timeline and reducing the Inspector to two tabs lowers navigation overhead while the lightweight task client is still being hardened.
+
+### 9. New-task composition must pin selection until the new run exists
+
+- Chosen: Introduce a temporary “new task” selection hold so background updates from other live runs cannot reclaim focus while the user is composing a fresh task.
+- Alternative considered: Continue clearing selection outright and let automatic task prioritization re-select whichever task currently appears most urgent.
+- Why: When another conversation was actively streaming, creating a new task could auto-switch the workspace back to the older run before the new request was submitted. The client should respect the explicit user intent to stay on the new-task draft.
+
 ## Risks / Trade-offs
 
 - [Without transcript/session APIs, Desk relaunch and cross-device recovery remain limited in phase 1] → Mitigation: make that limit explicit and optimize only for active-task continuity in the first milestone.
 - [Current turn data may still be lost if both live SSE and the final run payload fail] → Mitigation: make `run.completed.output` authoritative whenever it exists and keep SSE parsing resilient to single bad frames.
 - [Tasks created outside this Desk client remain out of scope for the first phase] → Mitigation: keep the product task-first and avoid silently expanding into a full Hermes history browser.
+- [Inlining task events into the full transcript view increases noise for non-debug scenarios] → Mitigation: keep this behavior scoped to full transcript mode and preserve the conversation-only mode for reduced-noise reading.
+- [Retaining temporary debug logging can add disk churn and expose noisy internal payloads] → Mitigation: keep the log file local to Application Support and treat it as a temporary debugging aid to remove after stabilization.
 
 ## Migration Plan
 
@@ -80,7 +106,8 @@ first-phase dependency.
 2. Refactor the Desk delivery path so `run.completed.output` materializes a final visible assistant message immediately.
 3. Keep Desk continuation, action handling, and live observation on the existing public Hermes run APIs.
 4. Remove first-phase assumptions that transcript/session hydration is required before showing the final answer.
-5. Add tests proving the Desk matches the display-first behavior of Telegram/Lark-style clients.
+5. Harden SSE parsing and local client-state ownership against real transport/process edge cases.
+6. Add tests proving the Desk matches the display-first behavior of Telegram/Lark-style clients.
 
 ## Open Questions
 

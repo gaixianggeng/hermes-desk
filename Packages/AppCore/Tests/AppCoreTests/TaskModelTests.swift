@@ -4,6 +4,105 @@ import XCTest
 @testable import AppCore
 
 final class TaskModelTests: XCTestCase {
+    func testWorkspaceMarkdownRenderModeUsesMarkdownForHeadingsAndPlainTextWhileStreaming() {
+        XCTAssertEqual(
+            WorkspaceMarkdownRenderMode.resolve(for: "### 标题\n\n- 列表项", isStreaming: false),
+            .markdown
+        )
+        XCTAssertEqual(
+            WorkspaceMarkdownRenderMode.resolve(for: "### 标题\n\n- 列表项", isStreaming: true),
+            .markdown
+        )
+        XCTAssertEqual(
+            WorkspaceMarkdownRenderMode.resolve(for: "```python\nprint('hi')", isStreaming: true),
+            .plainText
+        )
+        XCTAssertEqual(
+            WorkspaceMarkdownRenderMode.resolve(for: "普通文本，没有 markdown", isStreaming: false),
+            .plainText
+        )
+    }
+
+    func testWorkspaceMarkdownPreviewFormatterRemovesCommonMarkdownSyntax() {
+        let source = """
+        # Markdown 校验文本
+
+        这是 **加粗** 内容，还有 [OpenAI 官网](https://openai.com)。
+
+        ```python
+        print("hello")
+        ```
+        """
+
+        XCTAssertEqual(
+            WorkspaceMarkdownPreviewFormatter.plainText(source)
+                .replacingOccurrences(of: "\n", with: " ")
+                .replacingOccurrences(of: "  +", with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            "Markdown 校验文本 这是 加粗 内容，还有 OpenAI 官网。 print(\"hello\")"
+        )
+    }
+
+    func testWorkspaceMarkdownSourceFormatterDedentsAccidentallyIndentedMarkdownBlock() {
+        let source = """
+        当然，下面是一段 Markdown 示例文本：
+
+            # 这是一级标题
+
+            ## 这是二级标题
+
+            - 苹果
+            - 香蕉
+            - 橙子
+
+            ```python
+            print("Hello")
+            ```
+
+        链接示例
+        """
+
+        let normalized = WorkspaceMarkdownSourceFormatter.normalized(source)
+
+        XCTAssertTrue(normalized.contains("\n# 这是一级标题"))
+        XCTAssertTrue(normalized.contains("\n## 这是二级标题"))
+        XCTAssertTrue(normalized.contains("\n- 苹果"))
+        XCTAssertTrue(normalized.contains("\n```python"))
+        XCTAssertFalse(normalized.contains("\n    # 这是一级标题"))
+    }
+
+    func testWorkspaceMarkdownSourceFormatterUnwrapsOuterMarkdownExampleFence() {
+        let source = """
+        当然，下面是一段 Markdown 示例文本：
+
+        ```markdown
+        # 这是一级标题
+
+        ### 代码示例
+
+        ```python
+        def hello():
+            print("Hello, Markdown!")
+        ```
+
+        ### 链接示例
+
+        [点击访问 OpenAI](https://openai.com)
+        ```
+
+        如果你愿意，我也可以直接给你：
+        1. **更短的 Markdown 示例**
+        """
+
+        let normalized = WorkspaceMarkdownSourceFormatter.normalized(source)
+
+        XCTAssertFalse(normalized.contains("```markdown"))
+        XCTAssertTrue(normalized.contains("# 这是一级标题"))
+        XCTAssertTrue(normalized.contains("```python"))
+        XCTAssertTrue(normalized.contains("### 链接示例"))
+        XCTAssertTrue(normalized.contains("1. **更短的 Markdown 示例**"))
+    }
+
     func testSortedForOverviewPrioritizesPendingWork() {
         let now = Date()
         let tasks = [

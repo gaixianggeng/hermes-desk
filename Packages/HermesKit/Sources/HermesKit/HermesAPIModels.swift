@@ -313,6 +313,57 @@ public enum HermesRunEventType: String, Codable, Equatable, Sendable, CaseIterab
     case runInterrupted = "run.interrupted"
     case runCompleted = "run.completed"
     case runFailed = "run.failed"
+
+    fileprivate init?(normalizedRawValue rawValue: String) {
+        switch rawValue {
+        case Self.toolStarted.rawValue,
+             "tool_start",
+             "tool.start":
+            self = .toolStarted
+        case Self.toolCompleted.rawValue,
+             "tool_complete",
+             "tool.completed":
+            self = .toolCompleted
+        case Self.reasoningAvailable.rawValue,
+             "reasoning.delta",
+             "reasoning.available.delta",
+             "response.reasoning.delta",
+             "response.reasoning_text.delta":
+            self = .reasoningAvailable
+        case Self.messageDelta.rawValue,
+             "message",
+             "message.delta.text",
+             "text.delta",
+             "output_text.delta",
+             "response.output_text.delta":
+            self = .messageDelta
+        case Self.approvalRequested.rawValue,
+             "approval.request":
+            self = .approvalRequested
+        case Self.approvalResolved.rawValue,
+             "approval.resolve":
+            self = .approvalResolved
+        case Self.observationReconnecting.rawValue:
+            self = .observationReconnecting
+        case Self.observationDisconnected.rawValue:
+            self = .observationDisconnected
+        case Self.runInterrupted.rawValue,
+             "response.cancelled",
+             "response.interrupted":
+            self = .runInterrupted
+        case Self.runCompleted.rawValue,
+             "completed",
+             "response.completed",
+             "response.done":
+            self = .runCompleted
+        case Self.runFailed.rawValue,
+             "error",
+             "response.failed":
+            self = .runFailed
+        default:
+            return nil
+        }
+    }
 }
 
 public struct HermesRunEvent: Codable, Equatable, Sendable, Identifiable {
@@ -449,7 +500,9 @@ public struct HermesRunEvent: Codable, Equatable, Sendable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case type = "event"
+        case legacyType = "type"
         case runID = "run_id"
+        case legacyRunID = "id"
         case timestamp
         case toolName = "tool"
         case preview
@@ -469,9 +522,25 @@ public struct HermesRunEvent: Codable, Equatable, Sendable, Identifiable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        type = try container.decode(HermesRunEventType.self, forKey: .type)
-        runID = try container.decode(String.self, forKey: .runID)
-        timestamp = try HermesRunEvent.decodeTimestamp(from: container)
+        if let decodedType = try? container.decode(HermesRunEventType.self, forKey: .type) {
+            type = decodedType
+        } else if let rawType = try Self.decodeLossyStringIfPresent(from: container, forKey: .legacyType),
+                  let normalizedType = HermesRunEventType(normalizedRawValue: rawType) {
+            type = normalizedType
+        } else if let rawType = try Self.decodeLossyStringIfPresent(from: container, forKey: .type),
+                  let normalizedType = HermesRunEventType(normalizedRawValue: rawType) {
+            type = normalizedType
+        } else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .type,
+                in: container,
+                debugDescription: "Unsupported Hermes run event type"
+            )
+        }
+        let primaryRunID = try Self.decodeLossyStringIfPresent(from: container, forKey: .runID)?.nilIfBlank
+        let legacyRunID = try Self.decodeLossyStringIfPresent(from: container, forKey: .legacyRunID)?.nilIfBlank
+        runID = primaryRunID ?? legacyRunID ?? "unknown-run"
+        timestamp = (try? HermesRunEvent.decodeTimestamp(from: container)) ?? .now
         toolName = try Self.decodeLossyStringIfPresent(from: container, forKey: .toolName)?.nilIfBlank
         preview = try Self.decodeLossyStringIfPresent(from: container, forKey: .preview)?.nilIfBlank
         reasoning = try Self.decodeLossyStringIfPresent(from: container, forKey: .reasoning)?.nilIfBlank
@@ -495,6 +564,16 @@ public struct HermesRunEvent: Codable, Equatable, Sendable, Identifiable {
         } else {
             isToolError = false
             failureMessage = nil
+        }
+
+        if delta == nil, type == .messageDelta {
+            delta = reasoning?.nilIfEmptyPreservingWhitespace
+        }
+        if output == nil, type == .runCompleted {
+            output = reasoning?.nilIfBlank
+        }
+        if failureMessage == nil, type == .runFailed {
+            failureMessage = message?.nilIfBlank ?? reasoning?.nilIfBlank
         }
     }
 

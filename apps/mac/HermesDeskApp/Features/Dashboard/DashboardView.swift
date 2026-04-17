@@ -3,12 +3,35 @@ import AppKit
 import HermesKit
 import SwiftUI
 
+private enum HermesDeskRenderPerformanceLog {
+    static func append(_ message: String) {
+        let supportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+                .appending(path: "Library/Application Support", directoryHint: .isDirectory)
+        let directoryURL = supportURL.appending(path: "HermesDesk", directoryHint: .isDirectory)
+        let fileURL = directoryURL.appending(path: "run-events-debug.log")
+        let line = "[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n"
+        do {
+            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+            if FileManager.default.fileExists(atPath: fileURL.path) == false {
+                try Data(line.utf8).write(to: fileURL)
+            } else if let handle = try? FileHandle(forWritingTo: fileURL) {
+                try handle.seekToEnd()
+                try handle.write(contentsOf: Data(line.utf8))
+                try handle.close()
+            }
+        } catch {
+            return
+        }
+    }
+}
+
 struct DashboardView: View {
     @EnvironmentObject private var appState: AppStateStore
 
     @State private var listScope: WorkspaceListScope = .active
     @State private var taskFilter: WorkspaceTaskFilter = .all
-    @State private var transcriptDisplayMode: HermesWorkspaceTranscriptMode = .conversation
+    @State private var transcriptDisplayMode: HermesWorkspaceTranscriptMode = .full
     @State private var inspectorTab: WorkspaceInspectorTab = .overview
     @State private var composerTitleDraft = ""
     @State private var composerPromptDraft = ""
@@ -20,6 +43,7 @@ struct DashboardView: View {
     @State private var workspaceScrollCommand: WorkspaceScrollCommand?
     @State private var shouldAutoScrollSelectedTask = true
     @State private var pendingForcedAutoScrollTaskID: Task.ID?
+    @State private var expandedInspectorEventIDs: Set<String> = []
     @FocusState private var composerIsFocused: Bool
 
     var body: some View {
@@ -690,11 +714,11 @@ struct DashboardView: View {
                 Group {
                     if entry.monospaced {
                         Text(entry.body)
-                            .font(.callout.monospaced())
+                            .font(.subheadline.monospaced())
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(width: contentWidth, alignment: .leading)
                     } else {
-                        workspaceBodyView(entry.body)
+                        workspaceBodyView(entry)
                             .frame(width: contentWidth, alignment: .leading)
                     }
                 }
@@ -892,8 +916,6 @@ struct DashboardView: View {
                             switch inspectorTab {
                             case .overview:
                                 inspectorOverview(task)
-                            case .steps:
-                                inspectorSteps(task)
                             case .artifacts:
                                 inspectorArtifacts(task)
                             }
@@ -917,13 +939,10 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: 16) {
             inspectorCard(title: "Now / Next", systemImage: task.state.symbolName) {
                 VStack(alignment: .leading, spacing: 10) {
-                    inspectorLine(label: "Task state", value: "\(task.state.statusIndicator) \(task.state.localizedDisplayTitle)")
-                    inspectorLine(label: "Current phase", value: task.runState.phaseLabel)
+                    inspectorLine(label: "Status", value: inspectorStatusValue(for: task))
+                    inspectorLine(label: "Current phase", value: inspectorPhaseValue(for: task))
                     inspectorLine(label: "Last update", value: task.updatedAt.formatted(date: .abbreviated, time: .shortened))
 
-                    if let progressHint = task.runState.progressHint {
-                        inspectorLine(label: "Progress", value: progressHint)
-                    }
                     if let waitingReason = task.runState.waitingReason {
                         inspectorLine(label: "Waiting on", value: waitingReason)
                     }
@@ -935,6 +954,8 @@ struct DashboardView: View {
                     }
                 }
             }
+
+            inspectorProgressContent(task)
 
             if task.state == .waitingUser {
                 ConfirmationCardView(
@@ -993,11 +1014,53 @@ struct DashboardView: View {
         }
     }
 
-    private func inspectorSteps(_ task: Task) -> some View {
+    private func inspectorStatusValue(for task: Task) -> String {
+        if task.sessionStatus == .open {
+            return "🟢 \(appState.text(zh: "开放中", en: "Open"))"
+        }
+        if task.sessionStatus == .archived {
+            return "📦 \(appState.text(zh: "已归档", en: "Archived"))"
+        }
+
+        switch task.state {
+        case .waitingUser:
+            return "🟠 \(appState.text(zh: "待确认", en: "Needs input"))"
+        case .failed:
+            return "🔴 \(appState.text(zh: "待恢复", en: "Needs recovery"))"
+        case .running:
+            return "🔵 \(appState.text(zh: "进行中", en: "Running"))"
+        case .queued:
+            return "🕓 \(appState.text(zh: "排队中", en: "Queued"))"
+        case .paused:
+            return "⏸️ \(appState.text(zh: "已暂停", en: "Paused"))"
+        case .succeeded:
+            return "✅ \(appState.text(zh: "已完成", en: "Completed"))"
+        case .cancelled:
+            return "⏹️ \(appState.text(zh: "已停止", en: "Stopped"))"
+        }
+    }
+
+    private func inspectorPhaseValue(for task: Task) -> String {
+        if task.sessionStatus == .open {
+            switch task.runState.phaseLabel {
+            case "Conversation updated":
+                return appState.text(zh: "可继续追问", en: "Ready for follow-up")
+            case "Run finished":
+                return appState.text(zh: "等待下一步", en: "Waiting for next step")
+            default:
+                break
+            }
+        }
+
+        return task.runState.phaseLabel
+    }
+
+    @ViewBuilder
+    private func inspectorProgressContent(_ task: Task) -> some View {
         let progressSections = taskProgressSections(for: task)
         let milestoneEvents = taskMilestoneEvents(for: task)
 
-        return VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 16) {
             inspectorCard(title: "Task progress", systemImage: "list.bullet.rectangle") {
                 if progressSections.isEmpty {
                     Text(task.isPreview ? "Preview tasks do not carry detailed live execution activity yet." : "Detailed tool, terminal, and streaming activity will appear here.")
@@ -1005,6 +1068,25 @@ struct DashboardView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     VStack(alignment: .leading, spacing: 16) {
+                        let summaryLines = inspectorExecutionSummaryLines(
+                            for: task,
+                            progressSections: progressSections,
+                            milestoneEvents: milestoneEvents
+                        )
+                        if summaryLines.isEmpty == false {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Execution summary")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+
+                                ForEach(summaryLines, id: \.label) { line in
+                                    inspectorLine(label: line.label, value: line.value)
+                                }
+                            }
+
+                            Divider()
+                        }
+
                         ForEach(progressSections) { section in
                             VStack(alignment: .leading, spacing: 12) {
                                 Label(section.title, systemImage: section.systemImage)
@@ -1023,30 +1105,85 @@ struct DashboardView: View {
                 }
             }
 
-            inspectorCard(title: "Recent milestones", systemImage: "timeline.selection") {
-                if milestoneEvents.isEmpty {
-                    Text(task.isPreview ? "Preview tasks do not carry a live Hermes milestone timeline yet." : "Waiting for higher-signal Hermes milestones…")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                } else {
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(milestoneEvents) { event in
-                            inspectorEventRow(event, emphasizeDetail: false)
-                            if event.id != milestoneEvents.last?.id {
-                                Divider()
-                            }
-                        }
-                    }
+            if shouldShowInspectorLatestAnswer(for: task) {
+                inspectorCard(title: task.sessionStatus == .running ? "Latest streamed answer" : "Latest useful answer", systemImage: "text.alignleft") {
+                    Text(workspaceResultSummary(for: task) ?? workspaceCurrentFocusSummary(for: task))
+                        .font(.callout)
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
                 }
             }
+        }
+    }
 
-            inspectorCard(title: task.sessionStatus == .running ? "Latest streamed answer" : "Latest useful answer", systemImage: "text.alignleft") {
-                Text(workspaceResultSummary(for: task) ?? workspaceCurrentFocusSummary(for: task))
-                    .font(.callout)
-                    .foregroundStyle(.primary)
-                    .textSelection(.enabled)
+    private func shouldShowInspectorLatestAnswer(for task: Task) -> Bool {
+        guard let resultSummary = workspaceResultSummary(for: task), resultSummary.isEmpty == false else {
+            return false
+        }
+
+        if task.sessionStatus == .running {
+            return workspaceStreamingPreview(for: task) != nil
+        }
+
+        let transcriptMessages = appState.transcriptMessages(for: task)
+        let hasVisibleAssistantMessage = transcriptMessages.contains { message in
+            message.role == .assistant && task.shouldDisplayMessageInWorkspaceConversation(message)
+        }
+        return hasVisibleAssistantMessage == false
+    }
+
+    private func inspectorExecutionSummaryLines(
+        for task: Task,
+        progressSections: [WorkspaceProgressSection],
+        milestoneEvents: [TaskEvent]
+    ) -> [(label: String, value: String)] {
+        var lines: [(label: String, value: String)] = []
+
+        if let latestMilestone = milestoneEvents.first {
+            lines.append((
+                label: "Latest milestone",
+                value: workspaceEventHeadline(for: latestMilestone)
+            ))
+        }
+
+        let recentTools = recentProgressToolDisplayNames(for: task)
+        if recentTools.isEmpty == false {
+            lines.append((
+                label: "Recent tools",
+                value: recentTools.joined(separator: " • ")
+            ))
+        }
+
+        let totalUpdates = progressSections.reduce(0) { partialResult, section in
+            partialResult + section.events.count
+        } + milestoneEvents.count
+        if totalUpdates > 0 {
+            lines.append((
+                label: "Captured updates",
+                value: "\(totalUpdates) recent event\(totalUpdates == 1 ? "" : "s")"
+            ))
+        }
+
+        return lines
+    }
+
+    private func recentProgressToolDisplayNames(for task: Task) -> [String] {
+        var orderedNames: [String] = []
+
+        for event in task.taskEvents.reversed() {
+            guard let toolName = workspaceToolName(for: event) else {
+                continue
+            }
+            let displayName = workspaceDisplayToolName(toolName)
+            if orderedNames.contains(displayName) == false {
+                orderedNames.append(displayName)
+            }
+            if orderedNames.count == 3 {
+                break
             }
         }
+
+        return orderedNames
     }
 
     private func inspectorArtifacts(_ task: Task) -> some View {
@@ -1332,23 +1469,13 @@ struct DashboardView: View {
     }
 
     @ViewBuilder
-    private func workspaceBodyView(_ body: String) -> some View {
-        if let attributed = try? AttributedString(
-            markdown: body,
-            options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .full, failurePolicy: .returnPartiallyParsedIfPossible)
-        ) {
-            Text(attributed)
-                .font(.body)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-        } else {
-            Text(body)
-                .font(.body)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-        }
+    private func workspaceBodyView(_ entry: WorkspaceFeedEntry) -> some View {
+        WorkspaceMarkdownText(
+            entry.body,
+            isStreaming: entry.isStreamingMarkdown,
+            prefersMarkdown: entry.usesMarkdown
+        )
+            .textSelection(.enabled)
     }
 
     private func workspaceFeedTailAnchor(_ entries: [WorkspaceFeedEntry]) -> WorkspaceFeedTailAnchor? {
@@ -1466,7 +1593,7 @@ struct DashboardView: View {
     private func prepareComposerForNewTask() {
         composerError = nil
         appState.runLaunchError = nil
-        appState.selectTask(nil)
+        appState.holdSelectionForNewTask()
         composerTitleDraft = ""
         composerPromptDraft = ""
         isComposerExpanded = true
@@ -1509,8 +1636,10 @@ struct DashboardView: View {
     }
 
     private func workspaceFeedEntries(for task: Task) -> [WorkspaceFeedEntry] {
+        let buildStart = DispatchTime.now().uptimeNanoseconds
         let transcriptMessages = appState.transcriptMessages(for: task)
         let pendingEntries = pendingOutgoingEntries(for: task)
+        let eventEntries = workspaceEventFeedEntries(for: task)
         if transcriptMessages.isEmpty, task.isPreview {
             return legacyWorkspaceFeedEntries(for: task)
         }
@@ -1536,6 +1665,7 @@ struct DashboardView: View {
             workspaceFeedEntry(for: message, task: task, latestConversationAssistantID: latestConversationAssistantID)
         }
         entries.append(contentsOf: pendingEntries)
+        entries = entries.sorted(by: workspaceFeedEntrySort)
         // Show the streaming fallback entry for ALL running tasks (not just preview) when there is
         // no visible assistant message yet. This surfaces "Hermes is working…" while waiting for
         // the first token, and the streaming draft text once tokens arrive.
@@ -1560,6 +1690,12 @@ struct DashboardView: View {
                     monospaced: false,
                     bubbleStyle: .success
                 )
+            )
+        }
+        let buildElapsedMS = Double(DispatchTime.now().uptimeNanoseconds - buildStart) / 1_000_000
+        if buildElapsedMS >= 12 {
+            HermesDeskRenderPerformanceLog.append(
+                "feed build slow task=\(task.taskID) ms=\(String(format: "%.2f", buildElapsedMS)) messages=\(transcriptMessages.count) events=\(eventEntries.count) pending=\(pendingEntries.count)"
             )
         }
         return entries
@@ -1620,6 +1756,11 @@ struct DashboardView: View {
         task: Task,
         latestConversationAssistantID: Int64?
     ) -> WorkspaceFeedEntry {
+        let isStreamingAssistantMessage =
+            message.role == .assistant &&
+            message.id < 0 &&
+            task.sessionStatus == .running &&
+            latestConversationAssistantID == message.id
         let alignment: WorkspaceFeedEntry.Alignment = message.role == .user ? .trailing : .leading
         let background: Color
         let tint: Color
@@ -1664,12 +1805,95 @@ struct DashboardView: View {
             background: background,
             tint: tint,
             monospaced: message.role == .tool,
-            bubbleStyle: bubbleStyle
+            bubbleStyle: bubbleStyle,
+            timestamp: message.timestamp,
+            sortPriority: message.role == .assistant ? 2 : 1,
+            usesMarkdown: message.role == .assistant,
+            isStreamingMarkdown: isStreamingAssistantMessage
         )
     }
 
+    private func workspaceEventFeedEntries(for task: Task) -> [WorkspaceFeedEntry] {
+        task.taskEvents.compactMap { event in
+            switch event.type {
+            case .output, .result:
+                return nil
+            case .step, .log, .clarify, .stateChange, .confirm, .error:
+                return workspaceFeedEntry(for: event)
+            }
+        }
+    }
+
+    private func workspaceFeedEntry(for event: TaskEvent) -> WorkspaceFeedEntry {
+        let eventDetail = event.detail?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bubbleStyle: WorkspaceFeedEntry.BubbleStyle = {
+            switch event.type {
+            case .step:
+                return .tool
+            case .log, .clarify, .stateChange, .confirm, .error, .output, .result:
+                return .system
+            }
+        }()
+
+        return WorkspaceFeedEntry(
+            id: "task-event-\(event.eventID)",
+            title: workspaceEventTitle(for: event),
+            body: workspaceEventHeadline(for: event),
+            footer: [
+                eventDetail?.isEmpty == false ? eventDetail : nil,
+                event.timestamp.formatted(date: .omitted, time: .shortened)
+            ].compactMap { $0 }.joined(separator: " · "),
+            alignment: .leading,
+            background: workspaceEventBackground(for: event),
+            tint: workspaceEventTint(for: event),
+            monospaced: event.type == .log || event.type == .clarify,
+            showsProgress: event.type == .step || event.type == .stateChange,
+            bubbleStyle: bubbleStyle,
+            timestamp: event.timestamp,
+            sortPriority: 0,
+            usesMarkdown: false,
+            isStreamingMarkdown: false
+        )
+    }
+
+    private func workspaceFeedEntrySort(lhs: WorkspaceFeedEntry, rhs: WorkspaceFeedEntry) -> Bool {
+        switch (lhs.timestamp, rhs.timestamp) {
+        case let (l?, r?):
+            if l != r {
+                return l < r
+            }
+        case (.some, .none):
+            return true
+        case (.none, .some):
+            return false
+        case (.none, .none):
+            break
+        }
+
+        if lhs.sortPriority != rhs.sortPriority {
+            return lhs.sortPriority < rhs.sortPriority
+        }
+        return lhs.id < rhs.id
+    }
+
     private func pendingOutgoingEntries(for task: Task) -> [WorkspaceFeedEntry] {
-        appState.pendingOutgoingMessages(for: task).map { pendingMessage in
+        let visibleMessageFingerprints = Set(
+            appState.transcriptMessages(for: task).map { message in
+                PendingOutgoingFingerprint(
+                    sessionID: message.sessionID,
+                    normalizedContent: normalizedPendingOutgoingContent(message.displayText)
+                )
+            }
+        )
+
+        return appState.pendingOutgoingMessages(for: task).filter { pendingMessage in
+            visibleMessageFingerprints.contains(
+                PendingOutgoingFingerprint(
+                    sessionID: pendingMessage.sessionID,
+                    normalizedContent: normalizedPendingOutgoingContent(pendingMessage.content)
+                )
+            ) == false
+        }.map { pendingMessage in
             WorkspaceFeedEntry(
                 id: appState.stableWorkspaceEntryID(for: pendingMessage, taskID: task.taskID),
                 title: "",
@@ -1680,9 +1904,24 @@ struct DashboardView: View {
                 tint: .accentColor,
                 monospaced: false,
                 showsProgress: true,
-                bubbleStyle: .automatic
+                bubbleStyle: .automatic,
+                timestamp: pendingMessage.timestamp,
+                sortPriority: 1,
+                usesMarkdown: false,
+                isStreamingMarkdown: false
             )
         }
+    }
+
+    private struct PendingOutgoingFingerprint: Hashable {
+        let sessionID: String
+        let normalizedContent: String
+    }
+
+    private func normalizedPendingOutgoingContent(_ content: String) -> String {
+        content
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
     }
 
     private func workspaceStreamingEntry(for task: Task, transcriptMessages: [HermesConversationMessage]) -> WorkspaceFeedEntry? {
@@ -1863,9 +2102,9 @@ struct DashboardView: View {
             task.taskEvents
                 .filter { event in
                     switch event.type {
-                    case .step, .log, .output, .clarify, .stateChange:
+                    case .step, .log, .clarify, .stateChange:
                         return true
-                    case .confirm, .error, .result:
+                    case .output, .confirm, .error, .result:
                         return false
                     }
                 }
@@ -1875,14 +2114,13 @@ struct DashboardView: View {
     }
 
     private func taskProgressSections(for task: Task) -> [WorkspaceProgressSection] {
-        let progressEvents = taskProgressEvents(for: task)
-        let runStatusEvents = progressEvents.filter { $0.type == .stateChange }
-        let executionEvents = progressEvents.filter { $0.type == .step }
-        let agentStreamEvents = progressEvents.filter { event in
+        let runStatusEvents = recentTaskEvents(for: task, limit: 3) { $0.type == .stateChange }
+        let executionEvents = recentTaskEvents(for: task, limit: 6) { $0.type == .step }
+        let agentStreamEvents = recentTaskEvents(for: task, limit: 4) { event in
             switch event.type {
-            case .log, .output, .clarify:
+            case .log, .clarify:
                 return true
-            case .step, .stateChange, .confirm, .error, .result:
+            case .output, .step, .stateChange, .confirm, .error, .result:
                 return false
             }
         }
@@ -1912,6 +2150,19 @@ struct DashboardView: View {
         ].filter { $0.events.isEmpty == false }
     }
 
+    private func recentTaskEvents(
+        for task: Task,
+        limit: Int,
+        matching predicate: (TaskEvent) -> Bool
+    ) -> [TaskEvent] {
+        Array(
+            task.taskEvents
+                .filter(predicate)
+                .suffix(limit)
+                .reversed()
+        )
+    }
+
     private func taskMilestoneEvents(for task: Task) -> [TaskEvent] {
         Array(
             task.taskEvents
@@ -1930,6 +2181,10 @@ struct DashboardView: View {
 
     @ViewBuilder
     private func inspectorEventRow(_ event: TaskEvent, emphasizeDetail: Bool) -> some View {
+        let detail = event.detail?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let allowsCollapse = inspectorDetailAllowsCollapse(detail, emphasizeDetail: emphasizeDetail)
+        let isExpanded = expandedInspectorEventIDs.contains(event.id)
+
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(workspaceEventTitle(for: event))
@@ -1939,7 +2194,7 @@ struct DashboardView: View {
                     .padding(.vertical, 4)
                     .background(workspaceEventBackground(for: event), in: Capsule())
 
-                Text(event.summary)
+                Text(workspaceEventHeadline(for: event))
                     .font(.subheadline.weight(.semibold))
 
                 Spacer(minLength: 8)
@@ -1948,12 +2203,41 @@ struct DashboardView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if let detail = event.detail, detail.isEmpty == false {
+            if let detail, detail.isEmpty == false {
                 Text(detail)
                     .font(emphasizeDetail ? .callout.monospaced() : .caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(allowsCollapse && isExpanded == false ? 8 : nil)
                     .textSelection(.enabled)
+
+                if allowsCollapse {
+                    Button {
+                        toggleInspectorEventExpansion(for: event.id)
+                    } label: {
+                        Text(isExpanded ? "Show less" : "Show more")
+                            .font(.caption.weight(.medium))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                }
             }
+        }
+    }
+
+    private func inspectorDetailAllowsCollapse(_ detail: String?, emphasizeDetail: Bool) -> Bool {
+        guard emphasizeDetail, let detail, detail.isEmpty == false else {
+            return false
+        }
+
+        let lineCount = detail.components(separatedBy: .newlines).count
+        return lineCount > 8 || detail.count > 360
+    }
+
+    private func toggleInspectorEventExpansion(for eventID: String) {
+        if expandedInspectorEventIDs.contains(eventID) {
+            expandedInspectorEventIDs.remove(eventID)
+        } else {
+            expandedInspectorEventIDs.insert(eventID)
         }
     }
 
@@ -1962,19 +2246,113 @@ struct DashboardView: View {
         case .confirm:
             return "Approval"
         case .error:
+            if let toolName = workspaceToolName(for: event) {
+                return "\(workspaceToolCategoryTitle(for: toolName)) error"
+            }
             return "Issue"
         case .result:
             return "Result"
         case .output:
             return "Output"
         case .step:
-            return "Step"
+            if let toolName = workspaceToolName(for: event) {
+                return workspaceToolCategoryTitle(for: toolName)
+            }
+            return "Execution"
         case .stateChange:
-            return "Status change"
+            return "Run status"
         case .log:
-            return "Log"
+            return "Reasoning"
         case .clarify:
             return "Clarification"
+        }
+    }
+
+    private func workspaceEventHeadline(for event: TaskEvent) -> String {
+        guard let toolName = workspaceToolName(for: event) else {
+            return event.summary
+        }
+
+        let displayName = workspaceDisplayToolName(toolName)
+
+        switch event.type {
+        case .step:
+            if event.summary.hasPrefix("Started tool:") {
+                return "Started \(displayName)"
+            }
+            if event.summary.hasPrefix("Completed tool:") {
+                return "Completed \(displayName)"
+            }
+            return displayName
+        case .error:
+            return "\(displayName) failed"
+        case .confirm, .result, .output, .stateChange, .log, .clarify:
+            return event.summary
+        }
+    }
+
+    private func workspaceToolName(for event: TaskEvent) -> String? {
+        let prefixes = [
+            "Started tool: ",
+            "Completed tool: ",
+            "Tool reported an error: "
+        ]
+
+        for prefix in prefixes where event.summary.hasPrefix(prefix) {
+            let toolName = String(event.summary.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            return toolName.isEmpty ? nil : toolName
+        }
+
+        return nil
+    }
+
+    private func workspaceToolCategoryTitle(for toolName: String) -> String {
+        let normalized = toolName.lowercased()
+
+        if normalized == "terminal" {
+            return "Terminal"
+        }
+        if normalized == "skill_view" || normalized.hasPrefix("skill_") {
+            return "Skill"
+        }
+        if normalized.hasPrefix("browser_") {
+            return "Browser"
+        }
+        if ["read_file", "write_file", "patch", "search_files"].contains(normalized) {
+            return "Files"
+        }
+        if normalized == "delegate_task" {
+            return "Delegation"
+        }
+        if normalized == "clarify" {
+            return "Clarification"
+        }
+        return "Tool"
+    }
+
+    private func workspaceDisplayToolName(_ toolName: String) -> String {
+        let normalized = toolName.lowercased()
+
+        switch normalized {
+        case "terminal":
+            return "Terminal"
+        case "skill_view":
+            return "Skill view"
+        case "delegate_task":
+            return "Delegate task"
+        case "read_file":
+            return "Read file"
+        case "write_file":
+            return "Write file"
+        case "search_files":
+            return "Search files"
+        default:
+            let words = toolName
+                .split(separator: "_")
+                .map { fragment in
+                    fragment.prefix(1).uppercased() + fragment.dropFirst()
+                }
+            return words.joined(separator: " ")
         }
     }
 
@@ -2176,7 +2554,6 @@ private enum WorkspaceListScope: String, CaseIterable, Identifiable {
 
 private enum WorkspaceInspectorTab: String, CaseIterable, Identifiable {
     case overview
-    case steps
     case artifacts
 
     var id: String { rawValue }
@@ -2185,8 +2562,6 @@ private enum WorkspaceInspectorTab: String, CaseIterable, Identifiable {
         switch self {
         case .overview:
             return "Now"
-        case .steps:
-            return "Progress"
         case .artifacts:
             return "Artifacts"
         }
@@ -2331,6 +2706,10 @@ private struct WorkspaceFeedEntry: Identifiable {
     let monospaced: Bool
     let showsProgress: Bool
     let bubbleStyle: BubbleStyle
+    let timestamp: Date?
+    let sortPriority: Int
+    let usesMarkdown: Bool
+    let isStreamingMarkdown: Bool
 
     init(
         id: String,
@@ -2342,7 +2721,11 @@ private struct WorkspaceFeedEntry: Identifiable {
         tint: Color,
         monospaced: Bool,
         showsProgress: Bool = false,
-        bubbleStyle: BubbleStyle = .automatic
+        bubbleStyle: BubbleStyle = .automatic,
+        timestamp: Date? = nil,
+        sortPriority: Int = 0,
+        usesMarkdown: Bool = false,
+        isStreamingMarkdown: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -2354,6 +2737,10 @@ private struct WorkspaceFeedEntry: Identifiable {
         self.monospaced = monospaced
         self.showsProgress = showsProgress
         self.bubbleStyle = bubbleStyle
+        self.timestamp = timestamp
+        self.sortPriority = sortPriority
+        self.usesMarkdown = usesMarkdown
+        self.isStreamingMarkdown = isStreamingMarkdown
     }
 }
 
@@ -2677,7 +3064,8 @@ private struct WorkspaceProgressSection: Identifiable {
 
 private extension String {
     func workspaceSnippet(maxLength: Int) -> String {
-        let collapsed = replacingOccurrences(of: "\n", with: " ")
+        let collapsed = WorkspaceMarkdownPreviewFormatter.plainText(self)
+            .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\t", with: " ")
             .replacingOccurrences(of: "  +", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)

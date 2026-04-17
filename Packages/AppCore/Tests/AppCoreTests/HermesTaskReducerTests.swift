@@ -27,8 +27,7 @@ final class HermesTaskReducerTests: XCTestCase {
         XCTAssertEqual(task.state, .running)
         XCTAssertEqual(task.output, "Hello world")
         XCTAssertEqual(task.runState.phaseLabel, "Streaming output")
-        XCTAssertEqual(task.taskEvents.count, 2)
-        XCTAssertEqual(task.taskEvents.map(\.type), [.output, .output])
+        XCTAssertTrue(task.taskEvents.isEmpty)
     }
 
     func testApplyCompletionBuildsArtifactSummaryAndActions() {

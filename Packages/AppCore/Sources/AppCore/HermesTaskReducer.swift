@@ -5,7 +5,9 @@ public extension Task {
     mutating func apply(hermesEvent event: HermesRunEvent, maxStoredEvents: Int = 40) {
         updatedAt = event.timestamp
         runState.lastEventAt = event.timestamp
-        appendTaskEvent(for: event, maxStoredEvents: maxStoredEvents)
+        if event.type != .messageDelta {
+            appendTaskEvent(for: event, maxStoredEvents: maxStoredEvents)
+        }
 
         switch event.type {
         case .messageDelta:

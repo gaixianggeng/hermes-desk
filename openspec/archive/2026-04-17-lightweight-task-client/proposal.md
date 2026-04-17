@@ -23,6 +23,14 @@ APIs, just like Hermes messaging clients.
 - Treat Hermes public run APIs as the only required backend contract for this
   first phase.
 - Explicitly defer transcript/session reconciliation APIs to a later phase.
+- Harden the Desk SSE client against real-world framing variations and mixed
+  event envelopes observed during live runs.
+- Keep Xcode-hosted/test Desk instances off the real user cache so debugging
+  sessions cannot overwrite production task state.
+- Surface task event replay in the full transcript view and merge Inspector
+  “Progress” into the “Now” tab for lower-friction debugging.
+- Prevent background task updates from stealing focus while the user is
+  composing a new task.
 
 ## Capabilities
 
@@ -40,10 +48,14 @@ APIs, just like Hermes messaging clients.
 - `client-owned-task-cache`: Hermes Desk may retain lightweight client-owned
   task state for relaunch convenience, but transcript/session reconciliation is
   not part of the first-phase contract.
+- `workspace-transcript-debugging`: The full transcript view now acts as a
+  debugging timeline, replaying task events alongside messages instead of
+  forcing users into a separate progress-only pane.
 
 ## Impact
 
 - Affects [Packages/HermesKit/Sources/HermesKit/AgentBackend.swift](/Users/gaixiaotongxue/code/agent-hub/Packages/HermesKit/Sources/HermesKit/AgentBackend.swift) and [Packages/HermesKit/Sources/HermesKit/HermesLocalAdapter.swift](/Users/gaixiaotongxue/code/agent-hub/Packages/HermesKit/Sources/HermesKit/HermesLocalAdapter.swift) because the run-only Desk contract must stay narrow and centered on run APIs.
+- Affects [Packages/HermesKit/Sources/HermesKit/RunClient.swift](/Users/gaixiaotongxue/code/agent-hub/Packages/HermesKit/Sources/HermesKit/RunClient.swift) and [Packages/HermesKit/Sources/HermesKit/HermesAPIModels.swift](/Users/gaixiaotongxue/code/agent-hub/Packages/HermesKit/Sources/HermesKit/HermesAPIModels.swift) because live runs exposed parser and event-shape edge cases that must be handled inside the run transport layer.
 - Affects [apps/mac/HermesDeskApp/AppShell/AppStateStore.swift](/Users/gaixiaotongxue/code/agent-hub/apps/mac/HermesDeskApp/AppShell/AppStateStore.swift) because final-answer materialization must move to a display-first model driven by run events.
 - Affects [apps/mac/HermesDeskApp/Features/Dashboard/DashboardView.swift](/Users/gaixiaotongxue/code/agent-hub/apps/mac/HermesDeskApp/Features/Dashboard/DashboardView.swift) because working/sync placeholders must never hide or replace the current turn's answer.
 - Explicitly defers session/transcript query surfaces and any direct local-storage helpers from the first-phase critical path.

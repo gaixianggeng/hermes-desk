@@ -1,6 +1,30 @@
 import Foundation
 
+private enum HermesDeskRunDebugLog {
+    static func append(_ message: String) {
+        let supportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+                .appending(path: "Library/Application Support", directoryHint: .isDirectory)
+        let directoryURL = supportURL.appending(path: "HermesDesk", directoryHint: .isDirectory)
+        let fileURL = directoryURL.appending(path: "run-events-debug.log")
+        let line = "[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n"
+        do {
+            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+            if FileManager.default.fileExists(atPath: fileURL.path) == false {
+                try line.data(using: .utf8)?.write(to: fileURL)
+            } else if let handle = try? FileHandle(forWritingTo: fileURL) {
+                try handle.seekToEnd()
+                try handle.write(contentsOf: Data(line.utf8))
+                try handle.close()
+            }
+        } catch {
+            return
+        }
+    }
+}
+
 public struct HermesRunEventStreamParser {
+    private var pendingEventName: String?
     private var bufferedDataLines: [String] = []
 
     public init() {}
@@ -14,6 +38,16 @@ public struct HermesRunEventStreamParser {
             return nil
         }
 
+        if line.hasPrefix("event:") {
+            let pendingEvent = try flush()
+            var eventName = String(line.dropFirst(6))
+            if eventName.first == " " {
+                eventName.removeFirst()
+            }
+            pendingEventName = eventName.trimmingCharacters(in: .whitespacesAndNewlines)
+            return pendingEvent
+        }
+
         guard line.hasPrefix("data:") else {
             return nil
         }
@@ -22,8 +56,15 @@ public struct HermesRunEventStreamParser {
         if dataLine.first == " " {
             dataLine.removeFirst()
         }
+        let pendingEvent: HermesRunEvent?
+        if bufferedDataLines.isEmpty == false,
+           dataLine.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") {
+            pendingEvent = try flush()
+        } else {
+            pendingEvent = nil
+        }
         bufferedDataLines.append(dataLine)
-        return nil
+        return pendingEvent
     }
 
     public mutating func finish() throws -> HermesRunEvent? {
@@ -32,11 +73,14 @@ public struct HermesRunEventStreamParser {
 
     private mutating func flush() throws -> HermesRunEvent? {
         guard bufferedDataLines.isEmpty == false else {
+            pendingEventName = nil
             return nil
         }
 
         let payload = bufferedDataLines.joined(separator: "\n")
+        let eventName = pendingEventName
         bufferedDataLines.removeAll(keepingCapacity: true)
+        pendingEventName = nil
 
         guard let data = payload.data(using: .utf8) else {
             throw HermesRunClientError.invalidResponse
@@ -48,6 +92,9 @@ public struct HermesRunEventStreamParser {
             // Keep the SSE stream alive when the server emits an unexpected frame.
             // A single malformed event should not prevent later run.completed output
             // from reaching the workspace.
+            HermesDeskRunDebugLog.append(
+                "Parser dropped frame event=\(eventName ?? "<none>") payload=\(payload)"
+            )
             return nil
         }
     }
