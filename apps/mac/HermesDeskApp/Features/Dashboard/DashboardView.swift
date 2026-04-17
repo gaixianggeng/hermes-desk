@@ -99,6 +99,17 @@ struct DashboardView: View {
         .onChange(of: taskFilter) {
             syncSelectionToScope()
         }
+        .onChange(of: appState.selectedAgentID) { oldValue, newValue in
+            HermesDeskPerformanceLog.selection(
+                "dashboard agent old=\(oldValue ?? "nil") new=\(newValue ?? "nil") visibleTasks=\(displayedTasks.count)"
+            )
+        }
+        .onChange(of: appState.selectedTaskID) { oldValue, newValue in
+            let transcriptCount = appState.selectedTask.map { appState.transcriptMessages(for: $0).count } ?? 0
+            HermesDeskPerformanceLog.selection(
+                "dashboard task old=\(oldValue ?? "nil") new=\(newValue ?? "nil") transcript=\(transcriptCount) visibleTasks=\(displayedTasks.count)"
+            )
+        }
     }
 
     private var navigationColumn: some View {
@@ -381,11 +392,56 @@ struct DashboardView: View {
 
     private func workspaceComposerInset(task: Task?) -> some View {
         VStack(spacing: 0) {
+            if let task, shouldShowWorkspaceRunningStatusBar(for: task) {
+                workspaceRunningStatusBar(for: task)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
+                    .padding(.bottom, 8)
+                    .background(.ultraThinMaterial)
+            }
             Divider()
             workspaceComposer(task: task)
                 .padding(20)
                 .background(.ultraThinMaterial)
         }
+    }
+
+    private func shouldShowWorkspaceRunningStatusBar(for task: Task) -> Bool {
+        guard task.sessionStatus == .running else {
+            return false
+        }
+
+        return workspaceStreamingPreview(for: task) == nil
+    }
+
+    private func workspaceRunningStatusBar(for task: Task) -> some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Hermes is working")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+
+                Text(task.runState.phaseLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 12)
+
+            Text("See Task progress in Inspector")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.blue.opacity(0.12), lineWidth: 1)
+        )
     }
 
     @ViewBuilder
@@ -1578,16 +1634,23 @@ struct DashboardView: View {
     }
 
     private func syncSelectionToScope() {
+        let syncStart = DispatchTime.now().uptimeNanoseconds
         guard let selectedTask = appState.selectedTask else {
             if let firstTask = displayedTasks.first {
                 appState.selectTask(firstTask)
             }
+            HermesDeskPerformanceLog.selection(
+                "scope sync selectedTask=nil visibleTasks=\(displayedTasks.count) ms=\(HermesDeskPerformanceLog.formatElapsedMS(since: syncStart))"
+            )
             return
         }
 
         if displayedTasks.contains(where: { $0.taskID == selectedTask.taskID }) == false {
             appState.selectTask(displayedTasks.first)
         }
+        HermesDeskPerformanceLog.selection(
+            "scope sync selectedTask=\(selectedTask.taskID) visibleTasks=\(displayedTasks.count) ms=\(HermesDeskPerformanceLog.formatElapsedMS(since: syncStart))"
+        )
     }
 
     private func prepareComposerForNewTask() {
@@ -1639,7 +1702,6 @@ struct DashboardView: View {
         let buildStart = DispatchTime.now().uptimeNanoseconds
         let transcriptMessages = appState.transcriptMessages(for: task)
         let pendingEntries = pendingOutgoingEntries(for: task)
-        let eventEntries = workspaceEventFeedEntries(for: task)
         if transcriptMessages.isEmpty, task.isPreview {
             return legacyWorkspaceFeedEntries(for: task)
         }
@@ -1693,9 +1755,9 @@ struct DashboardView: View {
             )
         }
         let buildElapsedMS = Double(DispatchTime.now().uptimeNanoseconds - buildStart) / 1_000_000
-        if buildElapsedMS >= 12 {
-            HermesDeskRenderPerformanceLog.append(
-                "feed build slow task=\(task.taskID) ms=\(String(format: "%.2f", buildElapsedMS)) messages=\(transcriptMessages.count) events=\(eventEntries.count) pending=\(pendingEntries.count)"
+        if buildElapsedMS >= 8 {
+            HermesDeskPerformanceLog.render(
+                "feed build slow task=\(task.taskID) ms=\(String(format: "%.2f", buildElapsedMS)) messages=\(transcriptMessages.count) taskEvents=\(task.taskEvents.count) pending=\(pendingEntries.count) mode=\(transcriptDisplayMode.rawValue)"
             )
         }
         return entries
@@ -1943,19 +2005,7 @@ struct DashboardView: View {
                 bubbleStyle: .progress
             )
         }
-
-        return WorkspaceFeedEntry(
-            id: "streaming-status-\(task.taskID)",
-            title: "Hermes is working",
-            body: "Hermes is still executing this task. Tool, terminal, and agent activity stays in Task progress so the conversation view can stay focused on useful answers.",
-            footer: task.runState.phaseLabel,
-            alignment: .leading,
-            background: Color.blue.opacity(0.06),
-            tint: .blue,
-            monospaced: false,
-            showsProgress: true,
-            bubbleStyle: .progress
-        )
+        return nil
     }
 
     private func workspaceProgressActivityEntry(for task: Task, progressMessages: [HermesConversationMessage]) -> WorkspaceFeedEntry? {

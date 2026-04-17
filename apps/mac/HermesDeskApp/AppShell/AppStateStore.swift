@@ -3,6 +3,58 @@ import AppKit
 import HermesKit
 import SwiftUI
 
+enum HermesDeskPerformanceLog {
+    private static func timestampString() -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: Date())
+    }
+
+    private static func directoryURL() -> URL {
+        let supportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+                .appending(path: "Library/Application Support", directoryHint: .isDirectory)
+        return supportURL.appending(path: "HermesDesk", directoryHint: .isDirectory)
+    }
+
+    private static func fileURL() -> URL {
+        directoryURL().appending(path: "performance-debug.log")
+    }
+
+    static func append(_ message: String) {
+        let fileURL = fileURL()
+        let line = "[\(timestampString())] \(message)\n"
+        do {
+            try FileManager.default.createDirectory(at: directoryURL(), withIntermediateDirectories: true)
+            if FileManager.default.fileExists(atPath: fileURL.path) == false {
+                try Data(line.utf8).write(to: fileURL)
+            } else if let handle = try? FileHandle(forWritingTo: fileURL) {
+                try handle.seekToEnd()
+                try handle.write(contentsOf: Data(line.utf8))
+                try handle.close()
+            }
+        } catch {
+            return
+        }
+    }
+
+    static func selection(_ message: String) {
+        append("selection \(message)")
+    }
+
+    static func lifecycle(_ message: String) {
+        append("lifecycle \(message)")
+    }
+
+    static func render(_ message: String) {
+        append("render \(message)")
+    }
+
+    static func formatElapsedMS(since start: UInt64) -> String {
+        String(format: "%.2f", Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000)
+    }
+}
+
 private enum HermesDeskRunObservationLog {
     static func append(_ message: String) {
         let supportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -228,11 +280,13 @@ final class AppStateStore: ObservableObject {
     @Published var selectedAgentID: String? {
         didSet {
             guard oldValue != selectedAgentID else { return }
+            HermesDeskPerformanceLog.selection(
+                "agent old=\(oldValue ?? "nil") new=\(selectedAgentID ?? "nil") selectedTask=\(selectedTaskID ?? "nil") totalTasks=\(tasks.count)"
+            )
             if let selectedTask, selectedTask.agentID != selectedAgentID {
                 selectedTaskID = nil
             }
             selectDefaultTaskIfNeeded()
-            scheduleAgentReload(reason: .healthRefresh)
         }
     }
     @Published var tasks: [Task] = [] {
@@ -663,6 +717,9 @@ final class AppStateStore: ObservableObject {
     }
 
     func selectTask(_ task: Task?) {
+        HermesDeskPerformanceLog.selection(
+            "task direct target=\(task?.taskID ?? "nil") agent=\(task?.agentID ?? "nil") currentAgent=\(selectedAgentID ?? "nil")"
+        )
         if let task {
             selectedAgentID = task.agentID
         }
@@ -673,6 +730,7 @@ final class AppStateStore: ObservableObject {
     }
 
     func selectTask(id: Task.ID?) {
+        HermesDeskPerformanceLog.selection("task by-id target=\(id ?? "nil")")
         selectedTaskID = id
         taskActionFeedback = nil
         guard let id, let task = tasks.first(where: { $0.taskID == id }) else { return }
@@ -687,8 +745,10 @@ final class AppStateStore: ObservableObject {
 
     private func beginTranscriptLoadIfNeeded(for task: Task, force: Bool = false) {
         guard task.isPreview == false else { return }
-        let shouldRebuild = force || workspaceMessagesByTaskID[task.taskID] != nil
-        guard shouldRebuild else { return }
+        guard force else { return }
+        HermesDeskPerformanceLog.lifecycle(
+            "transcript rebuild task=\(task.taskID) force=true cachedMessages=\(workspaceMessagesByTaskID[task.taskID]?.count ?? 0)"
+        )
 
         rebuildWorkspaceMessagesCache(for: task)
         refreshTaskTitleIfNeeded(forTaskID: task.taskID)
@@ -841,13 +901,24 @@ final class AppStateStore: ObservableObject {
             return
         }
 
+        let flushDelay = streamingFlushDelay(for: taskID)
         streamingFlushTasksByTaskID[taskID] = Swift.Task { [weak self] in
-            try? await Swift.Task.sleep(for: .milliseconds(120))
+            try? await Swift.Task.sleep(for: flushDelay)
             guard Swift.Task.isCancelled == false else { return }
             await MainActor.run {
                 self?.flushBufferedStreamingDelta(for: taskID)
             }
         }
+    }
+
+    private func streamingFlushDelay(for taskID: Task.ID) -> Duration {
+        guard let task = tasks.first(where: { $0.taskID == taskID }) else {
+            return .milliseconds(120)
+        }
+        guard task.agentID == selectedAgentID else {
+            return .seconds(1)
+        }
+        return .milliseconds(120)
     }
 
     private func flushBufferedStreamingDelta(for taskID: Task.ID, logMetrics: Bool = true) {
@@ -878,7 +949,8 @@ final class AppStateStore: ObservableObject {
         tasks[index].currentSummary = tasks[index].latestOutputSummary ?? "Streaming output from Hermes"
         tasks[index].runState.progressHint = tasks[index].latestOutputSummary
 
-        if let sessionID = tasks[index].effectiveSessionID {
+        let shouldMaterializeTranscript = shouldMaterializeStreamingTranscript(for: taskID)
+        if shouldMaterializeTranscript, let sessionID = tasks[index].effectiveSessionID {
             let content = tasks[index].output.trimmingCharacters(in: .whitespacesAndNewlines)
             if content.isEmpty == false {
                 upsertStreamingAssistantMessage(
@@ -896,10 +968,12 @@ final class AppStateStore: ObservableObject {
             )
         }
 
-        let task = tasks[index]
-        reconcilePendingOutgoingMessages(for: task)
-        rebuildWorkspaceMessagesCache(for: task)
-        scheduleDeferredPersistence()
+        if shouldMaterializeTranscript {
+            let task = tasks[index]
+            reconcilePendingOutgoingMessages(for: task)
+            rebuildWorkspaceMessagesCache(for: task)
+        }
+        scheduleDeferredPersistence(after: .seconds(1))
     }
 
     private func nextLocalMessageID() -> Int64 {
@@ -910,6 +984,9 @@ final class AppStateStore: ObservableObject {
     private func scheduleAgentReload(reason: SubscriptionRestoreReason) {
         agentReloadTask?.cancel()
         let availableAgents = agents
+        HermesDeskPerformanceLog.lifecycle(
+            "reload scheduled reason=\(reason.statusMessage) availableAgents=\(availableAgents.count) selectedAgent=\(selectedAgentID ?? "nil")"
+        )
         agentReloadTask = Swift.Task { [weak self] in
             await self?.reloadTasksForAgents(availableAgents)
             guard Swift.Task.isCancelled == false else { return }
@@ -918,6 +995,7 @@ final class AppStateStore: ObservableObject {
     }
 
     private func reloadTasksForAgents(_ availableAgents: [HermesAgentDescriptor]) async {
+        let reloadStart = DispatchTime.now().uptimeNanoseconds
         guard availableAgents.isEmpty == false else {
             tasks = []
             taskRuntimeProfileIDs = [:]
@@ -925,6 +1003,7 @@ final class AppStateStore: ObservableObject {
             pendingOutgoingMessagesByTaskID = [:]
             stableWorkspaceEntryIDsByTaskID = [:]
             persistClientState()
+            HermesDeskPerformanceLog.lifecycle("reload completed agents=0 tasks=0 ms=\(HermesDeskPerformanceLog.formatElapsedMS(since: reloadStart))")
             return
         }
         restorePersistedClientState(availableAgents: availableAgents)
@@ -936,6 +1015,9 @@ final class AppStateStore: ObservableObject {
         if let selectedTask {
             rebuildWorkspaceMessagesCache(for: selectedTask)
         }
+        HermesDeskPerformanceLog.lifecycle(
+            "reload completed agents=\(availableAgents.count) tasks=\(tasks.count) selectedAgent=\(selectedAgentID ?? "nil") selectedTask=\(selectedTaskID ?? "nil") ms=\(HermesDeskPerformanceLog.formatElapsedMS(since: reloadStart))"
+        )
     }
 
     func transcriptMessages(for task: Task) -> [HermesConversationMessage] {
@@ -968,8 +1050,12 @@ final class AppStateStore: ObservableObject {
     }
 
     private func rebuildWorkspaceMessagesCache(for task: Task) {
+        let normalizedMessages = buildWorkspaceMessages(for: task)
+        if workspaceMessagesByTaskID[task.taskID] == normalizedMessages {
+            return
+        }
         var nextCache = workspaceMessagesByTaskID
-        nextCache[task.taskID] = buildWorkspaceMessages(for: task)
+        nextCache[task.taskID] = normalizedMessages
         workspaceMessagesByTaskID = nextCache
     }
 
@@ -1077,7 +1163,11 @@ final class AppStateStore: ObservableObject {
             deduplicated.append(message)
         }
 
-        workspaceMessagesByTaskID[taskID] = normalizedWorkspaceMessages(deduplicated)
+        let normalizedMessages = normalizedWorkspaceMessages(deduplicated)
+        if workspaceMessagesByTaskID[taskID] == normalizedMessages {
+            return
+        }
+        workspaceMessagesByTaskID[taskID] = normalizedMessages
     }
 
     private func appendTranscriptMessageIfNeeded(_ message: HermesConversationMessage, for task: Task) {
@@ -1166,7 +1256,15 @@ final class AppStateStore: ObservableObject {
             )
         }
 
-        workspaceMessagesByTaskID[taskID] = normalizedWorkspaceMessages(messages)
+        let normalizedMessages = normalizedWorkspaceMessages(messages)
+        if workspaceMessagesByTaskID[taskID] == normalizedMessages {
+            return
+        }
+        workspaceMessagesByTaskID[taskID] = normalizedMessages
+    }
+
+    private func shouldMaterializeStreamingTranscript(for taskID: Task.ID) -> Bool {
+        selectedTaskID == taskID
     }
 
     private func workspaceMessageFingerprint(for message: HermesConversationMessage) -> WorkspaceMessageFingerprint {
@@ -1191,6 +1289,44 @@ final class AppStateStore: ObservableObject {
         content
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+    }
+
+    private func conversationHistory(for task: Task?) -> [HermesConversationHistoryMessage]? {
+        guard let task else {
+            return nil
+        }
+
+        var history = transcriptMessages(for: task).compactMap { message -> HermesConversationHistoryMessage? in
+            let content = message.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard content.isEmpty == false else {
+                return nil
+            }
+
+            switch message.role {
+            case .user:
+                guard message.isSyntheticControlMessage == false else {
+                    return nil
+                }
+                return HermesConversationHistoryMessage(role: "user", content: content)
+            case .assistant:
+                guard task.shouldDisplayMessageInWorkspaceConversation(message) else {
+                    return nil
+                }
+                return HermesConversationHistoryMessage(role: "assistant", content: content)
+            case .tool, .system, .sessionMeta, .unknown:
+                return nil
+            }
+        }
+
+        if let requestText = task.requestText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           requestText.isEmpty == false {
+            let firstUserContent = history.first(where: { $0.role == "user" })?.content
+            if normalizedPendingOutgoingContent(firstUserContent ?? "") != normalizedPendingOutgoingContent(requestText) {
+                history.insert(HermesConversationHistoryMessage(role: "user", content: requestText), at: 0)
+            }
+        }
+
+        return history.isEmpty ? nil : history
     }
 
     func stableWorkspaceEntryID(for message: HermesConversationMessage, taskID: Task.ID) -> String {
@@ -1361,12 +1497,19 @@ final class AppStateStore: ObservableObject {
     func refreshWorkspace() async {
         guard isRefreshing == false else { return }
 
+        let refreshStart = DispatchTime.now().uptimeNanoseconds
+        HermesDeskPerformanceLog.lifecycle(
+            "refreshWorkspace start selectedAgent=\(selectedAgentID ?? "nil") tasks=\(tasks.count)"
+        )
         isRefreshing = true
         await reloadTasksForAgents(agents)
         connectionState = .starting(message: "Checking \(endpoint.displayName)…")
         connectionState = await selectedBackend.health()
         isRefreshing = false
 
+        HermesDeskPerformanceLog.lifecycle(
+            "refreshWorkspace end state=\(connectionState.title) tasks=\(tasks.count) ms=\(HermesDeskPerformanceLog.formatElapsedMS(since: refreshStart))"
+        )
         if case .online = connectionState {
             restoreLiveTaskSubscriptions(reason: .healthRefresh)
         }
@@ -1375,11 +1518,18 @@ final class AppStateStore: ObservableObject {
     private func refreshHealth(using restoreReason: SubscriptionRestoreReason) async {
         guard isRefreshing == false else { return }
 
+        let refreshStart = DispatchTime.now().uptimeNanoseconds
+        HermesDeskPerformanceLog.lifecycle(
+            "refreshHealth start reason=\(restoreReason.statusMessage) selectedAgent=\(selectedAgentID ?? "nil") endpoint=\(endpoint.displayName)"
+        )
         isRefreshing = true
         connectionState = .starting(message: "Checking \(endpoint.displayName)…")
         connectionState = await selectedBackend.health()
         isRefreshing = false
 
+        HermesDeskPerformanceLog.lifecycle(
+            "refreshHealth end state=\(connectionState.title) ms=\(HermesDeskPerformanceLog.formatElapsedMS(since: refreshStart))"
+        )
         if case .online = connectionState {
             restoreLiveTaskSubscriptions(reason: restoreReason)
         }
@@ -1409,6 +1559,7 @@ final class AppStateStore: ObservableObject {
         if let existingTask, Self.isManagedWorkspaceTask(existingTask) == false {
             throw RunLaunchValidationError.unmanagedConversation
         }
+        let conversationHistory = conversationHistory(for: existingTask)
 
         let targetAgentID = existingTask?.agentID ?? selectedAgentID ?? agents.first?.agentID ?? "hermes"
         let sessionID = existingTask?.effectiveSessionID ?? "hermes-desk-\(targetAgentID)-\(UUID().uuidString)"
@@ -1427,7 +1578,7 @@ final class AppStateStore: ObservableObject {
                 input: trimmedPrompt,
                 sessionID: sessionID,
                 instructions: nil,
-                conversationHistory: nil
+                conversationHistory: conversationHistory
             )
 
             if var existingTask {
@@ -1584,6 +1735,7 @@ final class AppStateStore: ObservableObject {
 
     private func restoreLiveTaskSubscriptions(reason: SubscriptionRestoreReason) {
         guard case .online = connectionState else {
+            HermesDeskPerformanceLog.lifecycle("restore subscriptions skipped state=\(connectionState.title)")
             return
         }
 
@@ -1595,9 +1747,13 @@ final class AppStateStore: ObservableObject {
         }
 
         guard tasksToRestore.isEmpty == false else {
+            HermesDeskPerformanceLog.lifecycle("restore subscriptions no-op reason=\(reason.statusMessage)")
             return
         }
 
+        HermesDeskPerformanceLog.lifecycle(
+            "restore subscriptions start reason=\(reason.statusMessage) count=\(tasksToRestore.count)"
+        )
         for task in tasksToRestore {
             guard let runID = task.runID,
                   let index = tasks.firstIndex(where: { $0.taskID == task.taskID }) else {
@@ -1608,6 +1764,9 @@ final class AppStateStore: ObservableObject {
             tasks[index].updatedAt = .now
             connectRunEvents(taskID: task.taskID, runID: runID)
         }
+        HermesDeskPerformanceLog.lifecycle(
+            "restore subscriptions end reason=\(reason.statusMessage) count=\(tasksToRestore.count)"
+        )
     }
 
     private func connectRunEvents(taskID: String, runID: String) {
@@ -2291,6 +2450,14 @@ final class AppStateStore: ObservableObject {
     #if DEBUG
     func refreshWorkspaceStateForTesting(taskID: Task.ID, force: Bool = true) async {
         await refreshWorkspaceState(forTaskID: taskID, force: force)
+    }
+
+    func applyRunEventForTesting(taskID: Task.ID, event: HermesRunEvent) {
+        apply(event: event, toTaskID: taskID)
+    }
+
+    func flushBufferedStreamingDeltaForTesting(taskID: Task.ID) {
+        flushBufferedStreamingDelta(for: taskID, logMetrics: false)
     }
 
     func materializeAssistantReplyForTesting(

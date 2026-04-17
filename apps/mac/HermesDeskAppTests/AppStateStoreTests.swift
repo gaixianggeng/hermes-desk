@@ -142,6 +142,222 @@ final class AppStateStoreTests: XCTestCase {
         )
     }
 
+    func testSelectingTaskAcrossAgentsDoesNotTriggerBackendHealthRefresh() async throws {
+        let alphaBackend = StubBackend(
+            diagnostics: AgentBackendDiagnostics(
+                adapterName: "Hermes",
+                hermesHomePath: "/tmp/alpha",
+                environmentFilePath: "/tmp/alpha/.env",
+                environmentFileExists: true,
+                apiKeyConfigured: true
+            )
+        )
+        let betaBackend = StubBackend(
+            endpoint: HermesEndpoint(port: 9642),
+            diagnostics: AgentBackendDiagnostics(
+                adapterName: "Hermes",
+                hermesHomePath: "/tmp/beta",
+                environmentFilePath: "/tmp/beta/.env",
+                environmentFileExists: true,
+                apiKeyConfigured: true
+            )
+        )
+        let agents = [
+            HermesAgentDescriptor(
+                agentID: "alpha01",
+                displayName: "Alpha",
+                roleSummary: nil,
+                runtimeProfileID: "alpha01",
+                runtimeProfile: HermesProfileDescriptor(
+                    profileID: "alpha01",
+                    displayName: "alpha01",
+                    hermesHomePath: "/tmp/alpha",
+                    environmentFilePath: "/tmp/alpha/.env",
+                    environmentFileExists: true
+                )
+            ),
+            HermesAgentDescriptor(
+                agentID: "beta01",
+                displayName: "Beta",
+                roleSummary: nil,
+                runtimeProfileID: "beta01",
+                runtimeProfile: HermesProfileDescriptor(
+                    profileID: "beta01",
+                    displayName: "beta01",
+                    hermesHomePath: "/tmp/beta",
+                    environmentFilePath: "/tmp/beta/.env",
+                    environmentFileExists: true
+                )
+            )
+        ]
+        let store = AppStateStore(
+            backend: alphaBackend,
+            initialAgents: agents,
+            initialBackendsByRuntimeProfileID: [
+                "alpha01": alphaBackend,
+                "beta01": betaBackend
+            ]
+        )
+        let alphaTask = Task.liveHermesTask(
+            taskID: "alpha01:session-1",
+            title: "Alpha task",
+            input: "alpha",
+            runID: "run_alpha",
+            sessionID: "hermes-desk-alpha01-session-1",
+            agentID: "alpha01"
+        )
+        let betaTask = Task.liveHermesTask(
+            taskID: "beta01:session-1",
+            title: "Beta task",
+            input: "beta",
+            runID: "run_beta",
+            sessionID: "hermes-desk-beta01-session-1",
+            agentID: "beta01"
+        )
+        store.tasks = [alphaTask, betaTask]
+
+        store.selectTask(betaTask)
+        try await Swift.Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(store.selectedTaskID, betaTask.taskID)
+        XCTAssertEqual(store.selectedAgentID, betaTask.agentID)
+        XCTAssertEqual(alphaBackend.healthCallCount, 0)
+        XCTAssertEqual(betaBackend.healthCallCount, 0)
+    }
+
+    func testLocalBenchmarkSwitchingAgentsWhileHiddenTaskStreams() async throws {
+        let alphaBackend = StubBackend(
+            diagnostics: AgentBackendDiagnostics(
+                adapterName: "Hermes",
+                hermesHomePath: "/tmp/alpha",
+                environmentFilePath: "/tmp/alpha/.env",
+                environmentFileExists: true,
+                apiKeyConfigured: true
+            )
+        )
+        let betaBackend = StubBackend(
+            endpoint: HermesEndpoint(port: 9642),
+            diagnostics: AgentBackendDiagnostics(
+                adapterName: "Hermes",
+                hermesHomePath: "/tmp/beta",
+                environmentFilePath: "/tmp/beta/.env",
+                environmentFileExists: true,
+                apiKeyConfigured: true
+            )
+        )
+        let gammaBackend = StubBackend(
+            endpoint: HermesEndpoint(port: 10642),
+            diagnostics: AgentBackendDiagnostics(
+                adapterName: "Hermes",
+                hermesHomePath: "/tmp/gamma",
+                environmentFilePath: "/tmp/gamma/.env",
+                environmentFileExists: true,
+                apiKeyConfigured: true
+            )
+        )
+        let agents = [
+            HermesAgentDescriptor(
+                agentID: "alpha01",
+                displayName: "Alpha",
+                roleSummary: nil,
+                runtimeProfileID: "alpha01",
+                runtimeProfile: HermesProfileDescriptor(
+                    profileID: "alpha01",
+                    displayName: "alpha01",
+                    hermesHomePath: "/tmp/alpha",
+                    environmentFilePath: "/tmp/alpha/.env",
+                    environmentFileExists: true
+                )
+            ),
+            HermesAgentDescriptor(
+                agentID: "beta01",
+                displayName: "Beta",
+                roleSummary: nil,
+                runtimeProfileID: "beta01",
+                runtimeProfile: HermesProfileDescriptor(
+                    profileID: "beta01",
+                    displayName: "beta01",
+                    hermesHomePath: "/tmp/beta",
+                    environmentFilePath: "/tmp/beta/.env",
+                    environmentFileExists: true
+                )
+            ),
+            HermesAgentDescriptor(
+                agentID: "gamma01",
+                displayName: "Gamma",
+                roleSummary: nil,
+                runtimeProfileID: "gamma01",
+                runtimeProfile: HermesProfileDescriptor(
+                    profileID: "gamma01",
+                    displayName: "gamma01",
+                    hermesHomePath: "/tmp/gamma",
+                    environmentFilePath: "/tmp/gamma/.env",
+                    environmentFileExists: true
+                )
+            )
+        ]
+        let store = AppStateStore(
+            backend: alphaBackend,
+            initialAgents: agents,
+            initialBackendsByRuntimeProfileID: [
+                "alpha01": alphaBackend,
+                "beta01": betaBackend,
+                "gamma01": gammaBackend
+            ]
+        )
+
+        let now = Date()
+        let alphaTask = Task.liveHermesTask(
+            taskID: "alpha01:session-1",
+            title: "Alpha task",
+            input: "alpha",
+            runID: "run_alpha",
+            sessionID: "hermes-desk-alpha01-session-1",
+            agentID: "alpha01"
+        )
+        let betaTask = Task.liveHermesTask(
+            taskID: "beta01:session-1",
+            title: "Beta task",
+            input: "beta",
+            runID: "run_beta",
+            sessionID: "hermes-desk-beta01-session-1",
+            agentID: "beta01"
+        )
+        let gammaTask = Task.liveHermesTask(
+            taskID: "gamma01:session-1",
+            title: "Gamma task",
+            input: "gamma",
+            runID: "run_gamma",
+            sessionID: "hermes-desk-gamma01-session-1",
+            agentID: "gamma01"
+        )
+        store.tasks = [alphaTask, betaTask, gammaTask]
+        store.selectTask(betaTask)
+
+        let start = DispatchTime.now().uptimeNanoseconds
+        for index in 0..<200 {
+            let selectedTask = index.isMultiple(of: 2) ? betaTask : gammaTask
+            store.selectTask(selectedTask)
+            store.applyRunEventForTesting(
+                taskID: alphaTask.taskID,
+                event: HermesRunEvent(
+                    type: .messageDelta,
+                    runID: "run_alpha",
+                    timestamp: now.addingTimeInterval(Double(index) * 0.01),
+                    delta: " chunk-\(index)"
+                )
+            )
+        }
+        store.flushBufferedStreamingDeltaForTesting(taskID: alphaTask.taskID)
+        let elapsedMS = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
+
+        let hiddenTask = try XCTUnwrap(store.tasks.first(where: { $0.taskID == alphaTask.taskID }))
+        XCTAssertTrue(hiddenTask.output.contains("chunk-199"))
+        XCTAssertEqual(store.transcriptMessages(for: hiddenTask).count, 0)
+        XCTAssertLessThan(elapsedMS, 2_000)
+        print("LOCAL_BENCH hidden-stream-switch elapsed_ms=\(String(format: "%.2f", elapsedMS))")
+    }
+
     func testStartHermesTaskContinuesExistingTaskUsingItsSessionID() async throws {
         let backend = StubBackend(
             diagnostics: AgentBackendDiagnostics(
@@ -186,6 +402,60 @@ final class AppStateStoreTests: XCTestCase {
         try await store.startHermesTask(title: nil, prompt: "继续", continuingTaskID: existingTask.taskID)
 
         XCTAssertEqual(backend.startedRunRequests.last?.sessionID, "hermes-desk-alpha01-existing-session")
+    }
+
+    func testStartHermesTaskIncludesWorkspaceConversationHistoryWhenContinuingTask() async throws {
+        let backend = StubBackend(
+            diagnostics: AgentBackendDiagnostics(
+                adapterName: "Hermes",
+                hermesHomePath: "/tmp/default",
+                environmentFilePath: "/tmp/default/.env",
+                environmentFileExists: true,
+                apiKeyConfigured: true
+            )
+        )
+        let agent = HermesAgentDescriptor(
+            agentID: "alpha01",
+            displayName: "Alpha",
+            roleSummary: nil,
+            runtimeProfileID: "alpha01",
+            runtimeProfile: HermesProfileDescriptor(
+                profileID: "alpha01",
+                displayName: "alpha01",
+                hermesHomePath: "/tmp/profile",
+                environmentFilePath: "/tmp/profile/.env",
+                environmentFileExists: false
+            )
+        )
+        let store = AppStateStore(backend: backend, initialAgents: [agent], initialBackendsByRuntimeProfileID: [:])
+        let sessionID = "hermes-desk-alpha01-existing-session"
+        let existingTask = Task(
+            taskID: "alpha01:\(sessionID)",
+            title: "Existing",
+            agentID: "alpha01",
+            sessionID: sessionID,
+            rootSessionID: sessionID,
+            currentSessionID: sessionID,
+            sessionSource: "api_server",
+            sessionLineage: [HermesSessionDescriptor(sessionID: sessionID, source: "api_server")],
+            createdAt: .now,
+            updatedAt: .now,
+            requestText: "关于我你了解多少",
+            currentSummary: "关于我你了解多少",
+            runState: RunState(state: .running, phaseLabel: "Conversation active", lastEventAt: .now)
+        )
+        store.tasks = [existingTask]
+        store.materializeAssistantReplyForTesting(taskID: existingTask.taskID, content: "我目前只知道你在这个工作区里发给我的消息。")
+
+        try await store.startHermesTask(title: nil, prompt: "我问你的第一句话是什么", continuingTaskID: existingTask.taskID)
+
+        XCTAssertEqual(
+            backend.startedRunRequests.last?.conversationHistory,
+            [
+                HermesConversationHistoryMessage(role: "user", content: "关于我你了解多少"),
+                HermesConversationHistoryMessage(role: "assistant", content: "我目前只知道你在这个工作区里发给我的消息。")
+            ]
+        )
     }
 
     func testStartHermesTaskRejectsContinuingExternalConversation() async throws {
@@ -808,6 +1078,7 @@ private final class StubBackend: AgentBackend, @unchecked Sendable {
     let endpoint: HermesEndpoint
     let diagnostics: AgentBackendDiagnostics
     private(set) var startedRunRequests: [HermesRunRequest] = []
+    private(set) var healthCallCount = 0
     var runEventsByRunID: [String: [HermesRunEvent]] = [:]
     var keepsUnconfiguredRunStreamsOpen = true
 
@@ -820,7 +1091,8 @@ private final class StubBackend: AgentBackend, @unchecked Sendable {
     }
 
     func health() async -> HermesConnectionState {
-        .online(HermesHealth(statusSummary: "ok"))
+        healthCallCount += 1
+        return .online(HermesHealth(statusSummary: "ok"))
     }
 
     func startRun(
