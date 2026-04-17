@@ -37,11 +37,4 @@ public protocol AgentBackend: Sendable {
         request: HermesRunActionRequest
     ) async throws -> HermesRunActionResponse
     func runEvents(for runID: String) -> AsyncThrowingStream<HermesRunEvent, Error>
-    func fetchSessionMessages(sessionID: String) async throws -> [HermesConversationMessage]
-    func fetchSessionMessagesPage(
-        sessionID: String,
-        limit: Int,
-        before: HermesConversationPageCursor?
-    ) async throws -> HermesConversationPage
-    func fetchSessionBinding(preferredSessionID: String, rootSessionID: String?) async throws -> HermesSessionBinding?
 }

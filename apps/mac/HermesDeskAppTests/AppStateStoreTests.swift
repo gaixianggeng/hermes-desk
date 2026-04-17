@@ -206,7 +206,7 @@ final class AppStateStoreTests: XCTestCase {
         XCTAssertTrue(sessionIDs.allSatisfy { $0.hasPrefix("hermes-desk-alpha01-") })
     }
 
-    func testStartHermesTaskImmediatelyMarksTranscriptLoadingAndKeepsPendingMessage() async throws {
+    func testStartHermesTaskKeepsPendingMessageWithoutTranscriptQueries() async throws {
         let backend = StubBackend(
             diagnostics: AgentBackendDiagnostics(
                 adapterName: "Hermes",
@@ -230,15 +230,13 @@ final class AppStateStoreTests: XCTestCase {
             )
         )
         let store = AppStateStore(backend: backend, initialAgents: [agent], initialBackendsByRuntimeProfileID: [:])
-        backend.fetchSessionMessagesPageHandler = { _, _, _ in
-            HermesConversationPage(messages: [], hasMoreBefore: false)
-        }
 
         try await store.startHermesTask(title: nil, prompt: "整体检查下这个项目目前的进展", continuingTaskID: nil)
 
         let task = try XCTUnwrap(store.tasks.first)
-        XCTAssertTrue(store.isTranscriptLoading(for: task))
+        XCTAssertFalse(store.isTranscriptLoading(for: task))
         XCTAssertEqual(store.pendingOutgoingMessages(for: task).map(\.content), ["整体检查下这个项目目前的进展"])
+        XCTAssertTrue(store.transcriptMessages(for: task).isEmpty)
     }
 
     func testStartHermesTaskSecondSendUsesSameSessionForSameTask() async throws {
@@ -299,21 +297,13 @@ final class AppStateStoreTests: XCTestCase {
             )
         )
         let store = AppStateStore(backend: backend, initialAgents: [agent], initialBackendsByRuntimeProfileID: [:])
-
-        backend.fetchSessionMessagesPageHandler = { sessionID, _, _ in
-            let timestamp = Date(timeIntervalSince1970: 1_776_097_850)
-            return HermesConversationPage(
-                messages: [
-                    HermesConversationMessage(id: 1, sessionID: sessionID, role: .user, content: "周杰伦今年多大", timestamp: timestamp),
-                    HermesConversationMessage(id: 2, sessionID: sessionID, role: .assistant, content: "周杰伦出生于 1979 年 1 月 18 日，按今年 2026 年算，47 岁。", timestamp: timestamp)
-                ],
-                hasMoreBefore: false
-            )
-        }
-
         try await store.startHermesTask(title: nil, prompt: "周杰伦今年多大", continuingTaskID: nil)
         let taskID = try XCTUnwrap(store.tasks.first?.taskID)
-        await store.refreshTranscriptsForTesting(taskID: taskID)
+        store.materializeAssistantReplyForTesting(
+            taskID: taskID,
+            content: "周杰伦出生于 1979 年 1 月 18 日，按今年 2026 年算，47 岁。",
+            timestamp: Date(timeIntervalSince1970: 1_776_097_850)
+        )
 
         let task = try XCTUnwrap(store.tasks.first)
         XCTAssertEqual(store.transcriptMessages(for: task).count, 2)
@@ -322,7 +312,7 @@ final class AppStateStoreTests: XCTestCase {
         XCTAssertEqual(task.requestText, "周杰伦今年多大")
     }
 
-    func testInjectedAgentStoreRefreshKeepsTask() async throws {
+    func testRefreshWorkspaceKeepsTaskFromClientCache() async throws {
         let backend = StubBackend(
             diagnostics: AgentBackendDiagnostics(
                 adapterName: "Hermes",
@@ -345,21 +335,21 @@ final class AppStateStoreTests: XCTestCase {
                 environmentFileExists: false
             )
         )
-        let store = AppStateStore(backend: backend, initialAgents: [agent], initialBackendsByRuntimeProfileID: [:])
-
-        backend.fetchSessionMessagesPageHandler = { sessionID, _, _ in
-            HermesConversationPage(
-                messages: [
-                    HermesConversationMessage(id: 1, sessionID: sessionID, role: .user, content: "hello", timestamp: .now),
-                    HermesConversationMessage(id: 2, sessionID: sessionID, role: .assistant, content: "hi", timestamp: .now)
-                ],
-                hasMoreBefore: false
-            )
-        }
+        let cacheStore = HermesDeskTaskCacheStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("json"))
+        let store = AppStateStore(
+            backend: backend,
+            initialAgents: [agent],
+            initialBackendsByRuntimeProfileID: [:],
+            taskCacheStore: cacheStore
+        )
+        backend.runEventsByRunID["run_1"] = [
+            HermesRunEvent(type: .runCompleted, runID: "run_1", timestamp: .now, output: "hi")
+        ]
 
         try await store.startHermesTask(title: nil, prompt: "hello", continuingTaskID: nil)
         let taskID = try XCTUnwrap(store.tasks.first?.taskID)
-        await store.refreshTranscriptsForTesting(taskID: taskID)
+        try await Swift.Task.sleep(nanoseconds: 50_000_000)
+        await store.refreshWorkspace()
 
         XCTAssertEqual(store.tasks.count, 1)
         XCTAssertEqual(store.tasks.first?.taskID, taskID)
@@ -390,10 +380,9 @@ final class AppStateStoreTests: XCTestCase {
             )
         )
         let store = AppStateStore(backend: backend, initialAgents: [agent], initialBackendsByRuntimeProfileID: [:])
-
-        backend.fetchSessionMessagesPageHandler = { _, _, _ in
-            HermesConversationPage(messages: [], hasMoreBefore: false)
-        }
+        backend.runEventsByRunID["run_1"] = [
+            HermesRunEvent(type: .runCompleted, runID: "run_1", timestamp: .now, output: "hi")
+        ]
 
         try await store.startHermesTask(title: nil, prompt: "hello", continuingTaskID: nil)
         let taskID = try XCTUnwrap(store.tasks.first?.taskID)
@@ -401,19 +390,7 @@ final class AppStateStoreTests: XCTestCase {
         XCTAssertEqual(store.pendingOutgoingMessages(for: taskBeforePersist).map(\.content), ["hello"])
         let pendingMessage = try XCTUnwrap(store.pendingOutgoingMessages(for: taskBeforePersist).first)
         let optimisticEntryID = store.stableWorkspaceEntryID(for: pendingMessage, taskID: taskID)
-
-        let sessionID = try XCTUnwrap(taskBeforePersist.effectiveSessionID)
-        backend.fetchSessionMessagesPageHandler = { returnedSessionID, _, _ in
-            XCTAssertEqual(returnedSessionID, sessionID)
-            return HermesConversationPage(
-                messages: [
-                    HermesConversationMessage(id: 1, sessionID: returnedSessionID, role: .user, content: "hello", timestamp: .now),
-                    HermesConversationMessage(id: 2, sessionID: returnedSessionID, role: .assistant, content: "hi", timestamp: .now)
-                ],
-                hasMoreBefore: false
-            )
-        }
-
+        try await Swift.Task.sleep(nanoseconds: 50_000_000)
         await store.refreshTranscriptsForTesting(taskID: taskID)
 
         let taskAfterPersist = try XCTUnwrap(store.tasks.first(where: { $0.taskID == taskID }))
@@ -447,36 +424,11 @@ final class AppStateStoreTests: XCTestCase {
             )
         )
         let store = AppStateStore(backend: backend, initialAgents: [agent], initialBackendsByRuntimeProfileID: [:])
-
-        backend.fetchSessionMessagesPageHandler = { sessionID, _, _ in
-            let baseTimestamp = Date(timeIntervalSince1970: 1_776_092_448)
-            if backend.startedRunRequests.count <= 1 {
-                return HermesConversationPage(
-                    messages: [
-                        HermesConversationMessage(id: 1, sessionID: sessionID, role: .user, content: "你好", timestamp: baseTimestamp),
-                        HermesConversationMessage(id: 2, sessionID: sessionID, role: .assistant, content: "你好！我在。", timestamp: baseTimestamp)
-                    ],
-                    hasMoreBefore: false
-                )
-            }
-
-            let followUpTimestamp = baseTimestamp.addingTimeInterval(10)
-            return HermesConversationPage(
-                messages: [
-                    HermesConversationMessage(id: 1, sessionID: sessionID, role: .user, content: "你好", timestamp: baseTimestamp),
-                    HermesConversationMessage(id: 2, sessionID: sessionID, role: .assistant, content: "你好！我在。", timestamp: baseTimestamp),
-                    HermesConversationMessage(id: 3, sessionID: sessionID, role: .user, content: "苏州天气", timestamp: followUpTimestamp),
-                    HermesConversationMessage(id: 4, sessionID: sessionID, role: .assistant, content: "苏州当前天气：晴。", timestamp: followUpTimestamp)
-                ],
-                hasMoreBefore: false
-            )
-        }
-
         try await store.startHermesTask(title: nil, prompt: "你好", continuingTaskID: nil)
         let taskID = try XCTUnwrap(store.tasks.first?.taskID)
-        await store.refreshTranscriptsForTesting(taskID: taskID)
+        store.materializeAssistantReplyForTesting(taskID: taskID, content: "你好！我在。")
         try await store.startHermesTask(title: nil, prompt: "苏州天气", continuingTaskID: taskID)
-        await store.refreshTranscriptsForTesting(taskID: taskID)
+        store.materializeAssistantReplyForTesting(taskID: taskID, content: "苏州当前天气：晴。")
 
         let task = try XCTUnwrap(store.tasks.first(where: { $0.taskID == taskID }))
         let transcript = store.transcriptMessages(for: task)
@@ -487,16 +439,162 @@ final class AppStateStoreTests: XCTestCase {
         XCTAssertEqual(Set(backend.startedRunRequests.compactMap(\.sessionID)).count, 1)
     }
 
+    func testRefreshTranscriptsReconcilesAPIServerAssistantReplyEvenWhenItLooksLikeProgress() async throws {
+        let backend = StubBackend(
+            diagnostics: AgentBackendDiagnostics(
+                adapterName: "Hermes",
+                hermesHomePath: "/tmp/default",
+                environmentFilePath: "/tmp/default/.env",
+                environmentFileExists: true,
+                apiKeyConfigured: true
+            )
+        )
+        let agent = HermesAgentDescriptor(
+            agentID: "alpha01",
+            displayName: "Alpha",
+            roleSummary: nil,
+            runtimeProfileID: "alpha01",
+            runtimeProfile: HermesProfileDescriptor(
+                profileID: "alpha01",
+                displayName: "alpha01",
+                hermesHomePath: "/tmp/profile",
+                environmentFilePath: "/tmp/profile/.env",
+                environmentFileExists: false
+            )
+        )
+        let cacheURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        let cacheStore = HermesDeskTaskCacheStore(fileURL: cacheURL)
+        let sessionID = "hermes-desk-alpha01-session-1"
+        let now = Date(timeIntervalSince1970: 1_776_000_000)
+        let assistantReply = """
+        ## 当前状态
+        status: connected
+        phase: preparing answer
+        payload: 已收到你的消息，正在继续排查并汇总结果。
+        """
+        let task = Task(
+            taskID: "alpha01:\(sessionID)",
+            title: "排查流式显示",
+            agentID: "alpha01",
+            sessionID: sessionID,
+            rootSessionID: sessionID,
+            currentSessionID: sessionID,
+            sessionSource: "api_server",
+            sessionLineage: [HermesSessionDescriptor(sessionID: sessionID, source: "api_server")],
+            runID: "run_1",
+            createdAt: now.addingTimeInterval(-60),
+            updatedAt: now,
+            requestText: "帮我看看为什么消息没展示",
+            currentSummary: "Sent a follow-up to Hermes. Waiting for the next run to respond.",
+            runState: RunState(state: .running, phaseLabel: "Follow-up queued", lastEventAt: now)
+        )
+        cacheStore.save(
+            .init(
+                tasks: [task],
+                taskRuntimeProfileIDs: [task.taskID: "alpha01"],
+                transcriptEntries: [
+                    .init(
+                        runtimeProfileID: "alpha01",
+                        sessionID: sessionID,
+                        messages: [
+                            HermesConversationMessage(
+                                id: 1,
+                                sessionID: sessionID,
+                                role: .user,
+                                content: "帮我看看为什么消息没展示",
+                                timestamp: now
+                            ),
+                            HermesConversationMessage(
+                                id: 2,
+                                sessionID: sessionID,
+                                role: .assistant,
+                                content: assistantReply,
+                                timestamp: now.addingTimeInterval(1)
+                            )
+                        ],
+                        hasMoreBefore: false
+                    )
+                ],
+                pendingEntries: []
+            )
+        )
+
+        let store = AppStateStore(
+            backend: backend,
+            initialAgents: [agent],
+            initialBackendsByRuntimeProfileID: [:],
+            taskCacheStore: cacheStore
+        )
+        let taskID = try XCTUnwrap(store.tasks.first?.taskID)
+
+        await store.refreshTranscriptsForTesting(taskID: taskID)
+
+        let updatedTask = try XCTUnwrap(store.tasks.first(where: { $0.taskID == taskID }))
+        XCTAssertNil(updatedTask.runID)
+        XCTAssertEqual(updatedTask.output, assistantReply)
+        XCTAssertEqual(updatedTask.currentSummary, assistantReply)
+        XCTAssertEqual(updatedTask.runState.phaseLabel, "Conversation updated")
+    }
+
+    func testRestoresTasksAndTranscriptFromClientOwnedCache() async throws {
+        let backend = StubBackend(
+            diagnostics: AgentBackendDiagnostics(
+                adapterName: "Hermes",
+                hermesHomePath: "/tmp/default",
+                environmentFilePath: "/tmp/default/.env",
+                environmentFileExists: true,
+                apiKeyConfigured: true
+            )
+        )
+        let agent = HermesAgentDescriptor(
+            agentID: "alpha01",
+            displayName: "Alpha",
+            roleSummary: nil,
+            runtimeProfileID: "alpha01",
+            runtimeProfile: HermesProfileDescriptor(
+                profileID: "alpha01",
+                displayName: "alpha01",
+                hermesHomePath: "/tmp/profile",
+                environmentFilePath: "/tmp/profile/.env",
+                environmentFileExists: false
+            )
+        )
+        let cacheURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        let cacheStore = HermesDeskTaskCacheStore(fileURL: cacheURL)
+        let firstStore = AppStateStore(
+            backend: backend,
+            initialAgents: [agent],
+            initialBackendsByRuntimeProfileID: [:],
+            taskCacheStore: cacheStore
+        )
+        try await firstStore.startHermesTask(title: nil, prompt: "restore me", continuingTaskID: nil)
+        let firstTaskID = try XCTUnwrap(firstStore.tasks.first?.taskID)
+        firstStore.materializeAssistantReplyForTesting(taskID: firstTaskID, content: "restored reply")
+
+        let restoredStore = AppStateStore(
+            backend: backend,
+            initialAgents: [agent],
+            initialBackendsByRuntimeProfileID: [:],
+            taskCacheStore: cacheStore
+        )
+
+        let restoredTask = try XCTUnwrap(restoredStore.tasks.first)
+        XCTAssertEqual(restoredTask.requestText, "restore me")
+        XCTAssertEqual(restoredStore.transcriptMessages(for: restoredTask).map(\.displayText), ["restore me", "restored reply"])
+    }
+
 }
 
 private final class StubBackend: AgentBackend, @unchecked Sendable {
     let endpoint: HermesEndpoint
     let diagnostics: AgentBackendDiagnostics
     private(set) var startedRunRequests: [HermesRunRequest] = []
-    var fetchSessionMessagesHandler: (@Sendable (String) async throws -> [HermesConversationMessage])?
-    var fetchSessionMessagesPageHandler: (@Sendable (String, Int, HermesConversationPageCursor?) async throws -> HermesConversationPage)?
-    var fetchSessionBindingHandler: (@Sendable (String, String?) async throws -> HermesSessionBinding?)?
     var runEventsByRunID: [String: [HermesRunEvent]] = [:]
+    var keepsUnconfiguredRunStreamsOpen = true
 
     init(
         endpoint: HermesEndpoint = .defaultLocal,
@@ -536,35 +634,16 @@ private final class StubBackend: AgentBackend, @unchecked Sendable {
 
     func runEvents(for runID: String) -> AsyncThrowingStream<HermesRunEvent, Error> {
         AsyncThrowingStream { continuation in
-            for event in runEventsByRunID[runID] ?? [] {
-                continuation.yield(event)
+            if let events = runEventsByRunID[runID] {
+                for event in events {
+                    continuation.yield(event)
+                }
+                continuation.finish()
+                return
             }
-            continuation.finish()
+            if keepsUnconfiguredRunStreamsOpen == false {
+                continuation.finish()
+            }
         }
-    }
-
-    func fetchSessionMessages(sessionID: String) async throws -> [HermesConversationMessage] {
-        if let fetchSessionMessagesHandler {
-            return try await fetchSessionMessagesHandler(sessionID)
-        }
-        return []
-    }
-
-    func fetchSessionMessagesPage(
-        sessionID: String,
-        limit: Int,
-        before: HermesConversationPageCursor?
-    ) async throws -> HermesConversationPage {
-        if let fetchSessionMessagesPageHandler {
-            return try await fetchSessionMessagesPageHandler(sessionID, limit, before)
-        }
-        return HermesConversationPage(messages: [], hasMoreBefore: false)
-    }
-
-    func fetchSessionBinding(preferredSessionID: String, rootSessionID: String?) async throws -> HermesSessionBinding? {
-        if let fetchSessionBindingHandler {
-            return try await fetchSessionBindingHandler(preferredSessionID, rootSessionID)
-        }
-        return nil
     }
 }

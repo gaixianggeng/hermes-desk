@@ -472,24 +472,24 @@ public struct HermesRunEvent: Codable, Equatable, Sendable, Identifiable {
         type = try container.decode(HermesRunEventType.self, forKey: .type)
         runID = try container.decode(String.self, forKey: .runID)
         timestamp = try HermesRunEvent.decodeTimestamp(from: container)
-        toolName = try container.decodeIfPresent(String.self, forKey: .toolName)?.nilIfBlank
-        preview = try container.decodeIfPresent(String.self, forKey: .preview)?.nilIfBlank
-        reasoning = try container.decodeIfPresent(String.self, forKey: .reasoning)?.nilIfBlank
-        delta = try container.decodeIfPresent(String.self, forKey: .delta)?.nilIfEmptyPreservingWhitespace
-        output = try container.decodeIfPresent(String.self, forKey: .output)?.nilIfBlank
+        toolName = try Self.decodeLossyStringIfPresent(from: container, forKey: .toolName)?.nilIfBlank
+        preview = try Self.decodeLossyStringIfPresent(from: container, forKey: .preview)?.nilIfBlank
+        reasoning = try Self.decodeLossyStringIfPresent(from: container, forKey: .reasoning)?.nilIfBlank
+        delta = try Self.decodeLossyStringIfPresent(from: container, forKey: .delta)?.nilIfEmptyPreservingWhitespace
+        output = try Self.decodeLossyStringIfPresent(from: container, forKey: .output)?.nilIfBlank
         duration = try container.decodeIfPresent(Double.self, forKey: .duration)
         usage = try container.decodeIfPresent(HermesRunUsage.self, forKey: .usage)
-        approvalID = try container.decodeIfPresent(String.self, forKey: .approvalID)?.nilIfBlank
-        command = try container.decodeIfPresent(String.self, forKey: .command)?.nilIfBlank
-        eventDescription = try container.decodeIfPresent(String.self, forKey: .eventDescription)?.nilIfBlank
+        approvalID = try Self.decodeLossyStringIfPresent(from: container, forKey: .approvalID)?.nilIfBlank
+        command = try Self.decodeLossyStringIfPresent(from: container, forKey: .command)?.nilIfBlank
+        eventDescription = try Self.decodeLossyStringIfPresent(from: container, forKey: .eventDescription)?.nilIfBlank
         allowPermanent = try container.decodeIfPresent(Bool.self, forKey: .allowPermanent)
-        decision = try container.decodeIfPresent(String.self, forKey: .decision)?.nilIfBlank
-        message = try container.decodeIfPresent(String.self, forKey: .message)?.nilIfBlank
+        decision = try Self.decodeLossyStringIfPresent(from: container, forKey: .decision)?.nilIfBlank
+        message = try Self.decodeLossyStringIfPresent(from: container, forKey: .message)?.nilIfBlank
 
         if let boolError = try container.decodeIfPresent(Bool.self, forKey: .error) {
             isToolError = boolError
             failureMessage = nil
-        } else if let stringError = try container.decodeIfPresent(String.self, forKey: .error)?.nilIfBlank {
+        } else if let stringError = try Self.decodeLossyStringIfPresent(from: container, forKey: .error)?.nilIfBlank {
             isToolError = false
             failureMessage = stringError
         } else {
@@ -545,6 +545,99 @@ public struct HermesRunEvent: Codable, Equatable, Sendable, Identifiable {
             in: container,
             debugDescription: "Expected unix timestamp as Double, Int, or String"
         )
+    }
+
+    private static func decodeLossyStringIfPresent(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        forKey key: CodingKeys
+    ) throws -> String? {
+        if let value = try? container.decode(String.self, forKey: key) {
+            return value
+        }
+        if let value = try? container.decode(Int.self, forKey: key) {
+            return String(value)
+        }
+        if let value = try? container.decode(Double.self, forKey: key) {
+            return String(value)
+        }
+        if let value = try? container.decode(Bool.self, forKey: key) {
+            return value ? "true" : "false"
+        }
+        if let value = try? container.decode(JSONValue.self, forKey: key) {
+            return value.stringValue
+        }
+        return nil
+    }
+}
+
+private enum JSONValue: Codable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case array([JSONValue])
+    case object([String: JSONValue])
+    case null
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .number(value)
+        } else if let value = try? container.decode([String: JSONValue].self) {
+            self = .object(value)
+        } else if let value = try? container.decode([JSONValue].self) {
+            self = .array(value)
+        } else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported JSON value")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case let .string(value):
+            try container.encode(value)
+        case let .number(value):
+            try container.encode(value)
+        case let .bool(value):
+            try container.encode(value)
+        case let .array(values):
+            try container.encode(values)
+        case let .object(values):
+            try container.encode(values)
+        case .null:
+            try container.encodeNil()
+        }
+    }
+
+    var stringValue: String? {
+        switch self {
+        case let .string(value):
+            return value
+        case let .number(value):
+            return String(value)
+        case let .bool(value):
+            return value ? "true" : "false"
+        case let .array(values):
+            return Self.serialize(values)
+        case let .object(values):
+            return Self.serialize(values)
+        case .null:
+            return nil
+        }
+    }
+
+    private static func serialize<T: Encodable>(_ value: T) -> String? {
+        guard let data = try? JSONEncoder().encode(value),
+              let string = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return string
     }
 }
 
@@ -667,26 +760,6 @@ public struct HermesConversationMessage: Codable, Equatable, Sendable, Identifia
     }
 }
 
-public struct HermesConversationPageCursor: Codable, Equatable, Sendable {
-    public var id: Int64
-    public var timestamp: Date
-
-    public init(id: Int64, timestamp: Date) {
-        self.id = id
-        self.timestamp = timestamp
-    }
-}
-
-public struct HermesConversationPage: Codable, Equatable, Sendable {
-    public var messages: [HermesConversationMessage]
-    public var hasMoreBefore: Bool
-
-    public init(messages: [HermesConversationMessage], hasMoreBefore: Bool) {
-        self.messages = messages
-        self.hasMoreBefore = hasMoreBefore
-    }
-}
-
 public enum HermesWorkspaceContentClassifier {
     public static func classify(_ text: String) -> HermesWorkspaceContentClassification {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -792,18 +865,6 @@ public struct HermesSessionDescriptor: Codable, Equatable, Sendable, Identifiabl
         self.source = source?.nilIfBlank
         self.startedAt = startedAt
         self.endedAt = endedAt
-    }
-}
-
-public struct HermesSessionBinding: Codable, Equatable, Sendable {
-    public var rootSessionID: String
-    public var currentSessionID: String
-    public var lineage: [HermesSessionDescriptor]
-
-    public init(rootSessionID: String, currentSessionID: String, lineage: [HermesSessionDescriptor]) {
-        self.rootSessionID = rootSessionID
-        self.currentSessionID = currentSessionID
-        self.lineage = lineage
     }
 }
 

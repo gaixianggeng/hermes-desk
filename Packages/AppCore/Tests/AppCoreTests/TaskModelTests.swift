@@ -313,6 +313,70 @@ final class TaskModelTests: XCTestCase {
         XCTAssertTrue(feishuTask.canContinueInWorkspaceConversation)
     }
 
+    func testAPIServerAssistantMessagesStayVisibleInConversationEvenWhenClassifierFlagsProgress() {
+        let now = Date()
+        let task = Task(
+            taskID: "api-server",
+            title: "api-server",
+            sessionID: "session-1",
+            rootSessionID: "session-1",
+            currentSessionID: "session-1",
+            sessionSource: "api_server",
+            sessionLineage: [HermesSessionDescriptor(sessionID: "session-1", source: "api_server")],
+            createdAt: now.addingTimeInterval(-60),
+            updatedAt: now,
+            currentSummary: "summary",
+            runState: RunState(state: .running, phaseLabel: "Conversation active", lastEventAt: now)
+        )
+        let message = HermesConversationMessage(
+            id: 42,
+            sessionID: "session-1",
+            role: .assistant,
+            content: """
+            ## 当前状态
+            status: reconnecting
+            phase: checking output
+            payload: {\"ok\":true}
+            """,
+            timestamp: now
+        )
+
+        XCTAssertEqual(message.workspaceClassification, .progress)
+        XCTAssertFalse(message.shouldDisplayInWorkspaceConversation)
+        XCTAssertTrue(task.shouldDisplayMessageInWorkspaceConversation(message))
+    }
+
+    func testNonAPIAssistantProgressMessagesRemainHiddenFromConversation() {
+        let now = Date()
+        let task = Task(
+            taskID: "local",
+            title: "local",
+            sessionID: "session-1",
+            rootSessionID: "session-1",
+            currentSessionID: "session-1",
+            sessionSource: "feishu",
+            sessionLineage: [HermesSessionDescriptor(sessionID: "session-1", source: "feishu")],
+            createdAt: now.addingTimeInterval(-60),
+            updatedAt: now,
+            currentSummary: "summary",
+            runState: RunState(state: .running, phaseLabel: "Conversation active", lastEventAt: now)
+        )
+        let message = HermesConversationMessage(
+            id: 43,
+            sessionID: "session-1",
+            role: .assistant,
+            content: """
+            ## 当前状态
+            status: reconnecting
+            phase: checking output
+            payload: {\"ok\":true}
+            """,
+            timestamp: now
+        )
+
+        XCTAssertFalse(task.shouldDisplayMessageInWorkspaceConversation(message))
+    }
+
     private func makeTask(
         id: String,
         state: TaskState,

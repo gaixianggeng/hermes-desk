@@ -241,6 +241,34 @@ public struct Task: Codable, Equatable, Sendable, Identifiable {
         return "…\(suffix)"
     }
 
+    public func shouldDisplayMessageInWorkspace(
+        _ message: HermesConversationMessage,
+        mode: HermesWorkspaceTranscriptMode
+    ) -> Bool {
+        switch mode {
+        case .conversation:
+            return shouldDisplayMessageInWorkspaceConversation(message)
+        case .full:
+            return message.shouldDisplayInWorkspace(mode: .full)
+        }
+    }
+
+    public func shouldDisplayMessageInWorkspaceConversation(_ message: HermesConversationMessage) -> Bool {
+        guard message.displayText.isEmpty == false else {
+            return false
+        }
+
+        if message.role == .assistant {
+            // API-backed assistant replies and locally streamed drafts should stay visible in
+            // the main conversation even if the generic classifier mistakes them for progress.
+            if message.id < 0 || normalizedSessionSource == "api_server" {
+                return true
+            }
+        }
+
+        return message.shouldDisplayInWorkspaceConversation
+    }
+
     public var statusContextLine: String? {
         if let pendingAction {
             return "\(pendingAction.pendingStatusIndicator) \(pendingAction.pendingStatusTitle)"

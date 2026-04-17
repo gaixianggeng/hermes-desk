@@ -1511,33 +1511,43 @@ struct DashboardView: View {
     private func workspaceFeedEntries(for task: Task) -> [WorkspaceFeedEntry] {
         let transcriptMessages = appState.transcriptMessages(for: task)
         let pendingEntries = pendingOutgoingEntries(for: task)
-        if transcriptMessages.isEmpty, appState.isTranscriptLoading(for: task) {
-            return pendingEntries.isEmpty ? loadingWorkspaceFeedEntries(for: task) : pendingEntries
-        }
-        if transcriptMessages.isEmpty, pendingEntries.isEmpty == false {
-            return pendingEntries
-        }
         if transcriptMessages.isEmpty, task.isPreview {
             return legacyWorkspaceFeedEntries(for: task)
         }
         if transcriptMessages.isEmpty {
-            return [
-                WorkspaceFeedEntry(
-                    id: "awaiting-transcript-\(task.taskID)",
-                    title: "Loading conversation",
-                    body: "Conversation history is syncing for this task.",
-                    footer: task.updatedAt.formatted(date: .abbreviated, time: .shortened),
-                    alignment: .leading,
-                    background: Color.secondary.opacity(0.08),
-                    tint: .secondary,
-                    monospaced: false,
-                    showsProgress: true
-                )
-            ]
+            var entries: [WorkspaceFeedEntry]
+            if appState.isTranscriptLoading(for: task) {
+                entries = pendingEntries.isEmpty ? loadingWorkspaceFeedEntries(for: task) : pendingEntries
+            } else if pendingEntries.isEmpty == false {
+                entries = pendingEntries
+            } else {
+                entries = [
+                    WorkspaceFeedEntry(
+                        id: "awaiting-transcript-\(task.taskID)",
+                        title: "Loading conversation",
+                        body: "Conversation history is syncing for this task.",
+                        footer: task.updatedAt.formatted(date: .abbreviated, time: .shortened),
+                        alignment: .leading,
+                        background: Color.secondary.opacity(0.08),
+                        tint: .secondary,
+                        monospaced: false,
+                        showsProgress: true
+                    )
+                ]
+            }
+
+            if let transcriptSyncEntry = workspaceTranscriptSyncEntry(for: task, transcriptMessages: []) {
+                entries.append(transcriptSyncEntry)
+            } else if let streamingEntry = workspaceStreamingEntry(for: task, transcriptMessages: []) {
+                entries.append(streamingEntry)
+            }
+            return entries
         }
 
-        let conversationMessages = transcriptMessages.filter(\.shouldDisplayInWorkspaceConversation)
-        let visibleMessages = transcriptMessages.filter { $0.shouldDisplayInWorkspace(mode: transcriptDisplayMode) }
+        let conversationMessages = transcriptMessages.filter(task.shouldDisplayMessageInWorkspaceConversation)
+        let visibleMessages = transcriptMessages.filter { message in
+            task.shouldDisplayMessageInWorkspace(message, mode: transcriptDisplayMode)
+        }
         let latestConversationAssistantID = conversationMessages
             .reversed()
             .first(where: { $0.role == .assistant })?
@@ -1547,7 +1557,15 @@ struct DashboardView: View {
             workspaceFeedEntry(for: message, task: task, latestConversationAssistantID: latestConversationAssistantID)
         }
         entries.append(contentsOf: pendingEntries)
-        if task.isPreview, let streamingEntry = workspaceStreamingEntry(for: task, transcriptMessages: visibleMessages) {
+        // Show the streaming fallback entry for ALL running tasks (not just preview) when there is
+        // no visible assistant message yet. This surfaces "Hermes is working…" while waiting for
+        // the first token, and the streaming draft text once tokens arrive.
+        let hasVisibleAssistantMessage = visibleMessages.contains { $0.role == .assistant }
+        if !hasVisibleAssistantMessage,
+           let transcriptSyncEntry = workspaceTranscriptSyncEntry(for: task, transcriptMessages: visibleMessages) {
+            entries.append(transcriptSyncEntry)
+        } else if !hasVisibleAssistantMessage,
+                  let streamingEntry = workspaceStreamingEntry(for: task, transcriptMessages: visibleMessages) {
             entries.append(streamingEntry)
         }
         if task.isPreview,
@@ -1765,6 +1783,33 @@ struct DashboardView: View {
         )
     }
 
+    private func workspaceTranscriptSyncEntry(for task: Task, transcriptMessages: [HermesConversationMessage]) -> WorkspaceFeedEntry? {
+        guard taskAwaitsTranscriptSync(task) else {
+            return nil
+        }
+
+        let body = task.runState.progressHint
+            ?? "Hermes finished the run, but the latest reply has not reached local transcript storage yet."
+        let footer = transcriptMessages
+            .last?
+            .timestamp
+            .formatted(date: .omitted, time: .shortened)
+            ?? task.updatedAt.formatted(date: .omitted, time: .shortened)
+
+        return WorkspaceFeedEntry(
+            id: "transcript-sync-\(task.taskID)",
+            title: "Hermes is syncing",
+            body: body,
+            footer: footer,
+            alignment: .leading,
+            background: Color.orange.opacity(0.08),
+            tint: .orange,
+            monospaced: false,
+            showsProgress: true,
+            bubbleStyle: .progress
+        )
+    }
+
     private func workspaceProgressActivityEntry(for task: Task, progressMessages: [HermesConversationMessage]) -> WorkspaceFeedEntry? {
         let progressEvents = taskProgressEvents(for: task)
         let totalUpdates = progressMessages.count + progressEvents.count
@@ -1800,15 +1845,17 @@ struct DashboardView: View {
             return nil
         }
 
+        // Check ALL assistant messages in the provided transcript (which may include
+        // locally-created negative-ID messages shown via the updated visibleMessages filter).
+        // If the streaming text is already displayed via the transcript, suppress the streaming
+        // entry to avoid showing the same content twice.
         let lastAssistantMessage = transcriptMessages
             .reversed()
-            .first(where: { $0.role == .assistant && $0.shouldDisplayInWorkspaceConversation })?
+            .first(where: { $0.role == .assistant })?
             .displayText
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        if let lastAssistantMessage,
-           lastAssistantMessage == streamingText,
-           task.state.isTerminal {
+        if let lastAssistantMessage, lastAssistantMessage == streamingText {
             return nil
         }
 
@@ -1832,7 +1879,7 @@ struct DashboardView: View {
         let transcriptMessages = appState.transcriptMessages(for: task)
         if let lastAssistantMessage = transcriptMessages
             .reversed()
-            .first(where: { $0.role == .assistant && $0.shouldDisplayInWorkspaceConversation })?
+            .first(where: { $0.role == .assistant && task.shouldDisplayMessageInWorkspaceConversation($0) })?
             .displayText,
            lastAssistantMessage.isEmpty == false {
             return lastAssistantMessage
@@ -1847,6 +1894,9 @@ struct DashboardView: View {
         }
         if task.state == .failed {
             return (task.runState.failureMessage ?? "Hermes hit an issue and needs recovery.").workspaceSnippet(maxLength: 180)
+        }
+        if taskAwaitsTranscriptSync(task) {
+            return (task.runState.progressHint ?? "Hermes finished the run, but the latest reply is still syncing.").workspaceSnippet(maxLength: 180)
         }
         if task.sessionStatus == .running {
             if let streamingText = workspaceStreamingText(for: task, transcriptMessages: appState.transcriptMessages(for: task)) {
@@ -1874,6 +1924,10 @@ struct DashboardView: View {
             return Task.summarizedWorkspaceTitle(from: requestText)
         }
         return task.title
+    }
+
+    private func taskAwaitsTranscriptSync(_ task: Task) -> Bool {
+        task.runState.phaseLabel == appState.text(zh: "等待对话同步", en: "Waiting for transcript sync")
     }
 
     private func workspaceListIntroduction(for task: Task) -> String {

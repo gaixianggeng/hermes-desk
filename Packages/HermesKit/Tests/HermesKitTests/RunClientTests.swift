@@ -141,6 +141,60 @@ final class RunClientTests: XCTestCase {
         XCTAssertEqual(events.last?.message, "Stop requested via API server")
     }
 
+    func testEventParserToleratesStructuredPreviewPayloads() throws {
+        var parser = HermesRunEventStreamParser()
+        let lines = [
+            "data: {\"event\":\"tool.started\",\"run_id\":\"run_structured\",\"timestamp\":1710000004.0,\"tool\":\"browser_navigate\",\"preview\":{\"url\":\"https://example.com\",\"title\":\"Example\"}}",
+            "",
+            "data: {\"event\":\"reasoning.available\",\"run_id\":\"run_structured\",\"timestamp\":1710000005.0,\"text\":[\"step one\",\"step two\"]}",
+            ""
+        ]
+
+        var events: [HermesRunEvent] = []
+        for line in lines {
+            if let event = try parser.consume(line: line) {
+                events.append(event)
+            }
+        }
+
+        XCTAssertEqual(events.count, 2)
+        XCTAssertEqual(events.first?.type, .toolStarted)
+        XCTAssertEqual(events.first?.toolName, "browser_navigate")
+        XCTAssertNotNil(events.first?.preview)
+        XCTAssertTrue(events.first?.preview?.contains("\"title\":\"Example\"") == true)
+        XCTAssertTrue(events.first?.preview?.contains("\"url\":\"https:\\/\\/example.com\"") == true)
+        XCTAssertEqual(events.last?.type, .reasoningAvailable)
+        XCTAssertEqual(events.last?.reasoning, "[\"step one\",\"step two\"]")
+    }
+
+    func testEventParserSkipsMalformedFramesAndContinuesStreaming() throws {
+        var parser = HermesRunEventStreamParser()
+        let lines = [
+            "data: {\"event\":\"run.unknown\",\"run_id\":\"run_bad\",\"timestamp\":1710000000.0,\"delta\":\"ignored\"}",
+            "",
+            "data: {\"event\":\"message.delta\",\"run_id\":\"run_bad\",\"timestamp\":1710000001.0,\"delta\":\"hello\"}",
+            "",
+            "data: {\"event\":\"run.completed\",\"run_id\":\"run_bad\",\"timestamp\":1710000002.0,\"output\":\"hello\"}",
+            ""
+        ]
+
+        var events: [HermesRunEvent] = []
+        for line in lines {
+            if let event = try parser.consume(line: line) {
+                events.append(event)
+            }
+        }
+        if let event = try parser.finish() {
+            events.append(event)
+        }
+
+        XCTAssertEqual(events.count, 2)
+        XCTAssertEqual(events.first?.type, .messageDelta)
+        XCTAssertEqual(events.first?.delta, "hello")
+        XCTAssertEqual(events.last?.type, .runCompleted)
+        XCTAssertEqual(events.last?.output, "hello")
+    }
+
     func testRunActionAddsApprovalIDAndParsesResponse() async throws {
         let endpoint = HermesEndpoint(host: "localhost", port: 8642)
         let url = try XCTUnwrap(endpoint.baseURL?.appending(path: "v1/runs/run_123/actions"))

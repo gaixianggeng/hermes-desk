@@ -42,7 +42,14 @@ public struct HermesRunEventStreamParser {
             throw HermesRunClientError.invalidResponse
         }
 
-        return try JSONDecoder().decode(HermesRunEvent.self, from: data)
+        do {
+            return try JSONDecoder().decode(HermesRunEvent.self, from: data)
+        } catch {
+            // Keep the SSE stream alive when the server emits an unexpected frame.
+            // A single malformed event should not prevent later run.completed output
+            // from reaching the workspace.
+            return nil
+        }
     }
 }
 
