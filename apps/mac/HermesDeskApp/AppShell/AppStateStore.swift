@@ -1596,10 +1596,7 @@ final class AppStateStore: ObservableObject {
                 phaseLabel: text(zh: "对话已更新", en: "Conversation updated")
             )
         } else {
-            tasks[index].runState.state = .running
-            tasks[index].runState.phaseLabel = text(zh: "等待对话同步", en: "Waiting for transcript sync")
-            tasks[index].runState.progressHint = text(zh: "Hermes 已结束运行，但最新回复还未同步到本地记录。", en: "Hermes finished the run, but the latest reply has not reached local transcript storage yet.")
-            tasks[index].availableActions = [.openWorkspace]
+            settleRunWithoutVisibleAnswer(at: index)
         }
         persistClientState()
     }
@@ -1765,6 +1762,25 @@ final class AppStateStore: ObservableObject {
         tasks[index].runState.observationMessage = nil
         tasks[index].currentSummary = trimmed.count > 180 ? String(trimmed.prefix(180)) + "…" : trimmed
         tasks[index].output = trimmed
+        tasks[index].availableActions = [.openWorkspace]
+        tasks[index].artifact = nil
+
+        let task = tasks[index]
+        reconcilePendingOutgoingMessages(for: task)
+        rebuildWorkspaceMessagesCache(for: task)
+        refreshTaskTitleIfNeeded(forTaskID: task.taskID)
+        persistClientState()
+    }
+
+    private func settleRunWithoutVisibleAnswer(at index: Int) {
+        tasks[index].runID = nil
+        tasks[index].pendingAction = nil
+        tasks[index].pendingActionStartedAt = nil
+        tasks[index].runState.state = .running
+        tasks[index].runState.phaseLabel = text(zh: "运行已结束", en: "Run finished")
+        tasks[index].runState.progressHint = nil
+        tasks[index].runState.observationState = .live
+        tasks[index].runState.observationMessage = nil
         tasks[index].availableActions = [.openWorkspace]
         tasks[index].artifact = nil
 

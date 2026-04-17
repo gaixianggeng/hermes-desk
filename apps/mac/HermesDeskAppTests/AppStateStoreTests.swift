@@ -397,6 +397,44 @@ final class AppStateStoreTests: XCTestCase {
         XCTAssertEqual(store.transcriptMessages(for: task).map(\.displayText), ["苏州今天的问题", "苏州今天多云，26°C。"])
     }
 
+    func testRunClosureWithoutVisibleReplyDoesNotEnterTranscriptSyncState() async throws {
+        let backend = StubBackend(
+            diagnostics: AgentBackendDiagnostics(
+                adapterName: "Hermes",
+                hermesHomePath: "/tmp/default",
+                environmentFilePath: "/tmp/default/.env",
+                environmentFileExists: true,
+                apiKeyConfigured: true
+            )
+        )
+        let agent = HermesAgentDescriptor(
+            agentID: "alpha01",
+            displayName: "Alpha",
+            roleSummary: nil,
+            runtimeProfileID: "alpha01",
+            runtimeProfile: HermesProfileDescriptor(
+                profileID: "alpha01",
+                displayName: "alpha01",
+                hermesHomePath: "/tmp/profile",
+                environmentFilePath: "/tmp/profile/.env",
+                environmentFileExists: false
+            )
+        )
+        let store = AppStateStore(backend: backend, initialAgents: [agent], initialBackendsByRuntimeProfileID: [:])
+        backend.runEventsByRunID["run_1"] = []
+        backend.keepsUnconfiguredRunStreamsOpen = false
+
+        try await store.startHermesTask(title: nil, prompt: "给我一个状态", continuingTaskID: nil)
+        let taskID = try XCTUnwrap(store.tasks.first?.taskID)
+        try await Swift.Task.sleep(nanoseconds: 50_000_000)
+
+        let task = try XCTUnwrap(store.tasks.first(where: { $0.taskID == taskID }))
+        XCTAssertNil(task.runID)
+        XCTAssertEqual(task.runState.phaseLabel, "Run finished")
+        XCTAssertNil(task.runState.progressHint)
+        XCTAssertTrue(store.transcriptMessages(for: task).map(\.displayText).contains("给我一个状态"))
+    }
+
     func testPendingOutgoingClearsAfterPersistedUserMessage() async throws {
         let backend = StubBackend(
             diagnostics: AgentBackendDiagnostics(
