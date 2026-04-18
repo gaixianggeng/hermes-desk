@@ -5,12 +5,15 @@ import SwiftUI
 
 private enum HermesDeskRenderPerformanceLog {
     static func append(_ message: String) {
+        guard ProcessInfo.processInfo.environment["HERMES_DESK_DEBUG_LOGS"] == "1" else {
+            return
+        }
         let supportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
                 .appending(path: "Library/Application Support", directoryHint: .isDirectory)
         let directoryURL = supportURL.appending(path: "HermesDesk", directoryHint: .isDirectory)
         let fileURL = directoryURL.appending(path: "run-events-debug.log")
-        let line = "[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n"
+        let line = "[\(formatter.string(from: Date()))] \(message)\n"
         do {
             try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
             if FileManager.default.fileExists(atPath: fileURL.path) == false {
@@ -24,15 +27,21 @@ private enum HermesDeskRenderPerformanceLog {
             return
         }
     }
+
+    nonisolated(unsafe) private static let formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 }
 
 struct DashboardView: View {
     @EnvironmentObject private var appState: AppStateStore
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var listScope: WorkspaceListScope = .active
     @State private var taskFilter: WorkspaceTaskFilter = .all
     @State private var transcriptDisplayMode: HermesWorkspaceTranscriptMode = .full
-    @State private var inspectorTab: WorkspaceInspectorTab = .overview
     @State private var composerTitleDraft = ""
     @State private var composerPromptDraft = ""
     @State private var composerError: String?
@@ -44,8 +53,15 @@ struct DashboardView: View {
     @State private var shouldAutoScrollSelectedTask = true
     @State private var pendingForcedAutoScrollTaskID: Task.ID?
     @State private var expandedInspectorEventIDs: Set<String> = []
-    @State private var selectedTaskSnapshot: Task?
+    @State private var expandedInspectorSummaryFieldIDs: Set<String> = []
+    @State private var highlightedInspectorSummaryFieldIDs: Set<String> = []
+    @State private var lastInspectorSummaryValues: [String: String] = [:]
+    @State private var inspectorSummaryHighlightTokens: [String: UUID] = [:]
+    @State private var selectedTaskIDSnapshot: Task.ID?
+    @State private var selectedTaskDerivedSnapshot: SelectedTaskDerivedSnapshot?
+    @State private var selectedTaskEntriesSignature: SelectedTaskEntriesSignature?
     @State private var selectedTaskEntriesSnapshot: [WorkspaceFeedEntry] = []
+    @State private var animatedWorkspaceTaskID: Task.ID?
     @FocusState private var composerIsFocused: Bool
 
     var body: some View {
@@ -118,6 +134,10 @@ struct DashboardView: View {
         }
     }
 
+    private var selectedTaskViewTask: Task? {
+        appState.selectedTask
+    }
+
     private var navigationColumn: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 8) {
@@ -155,6 +175,9 @@ struct DashboardView: View {
             }
             .padding(.horizontal, 20)
             .padding(.top, 20)
+
+            taskSummaryStrip
+                .padding(.horizontal, 20)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
@@ -313,101 +336,112 @@ struct DashboardView: View {
     }
 
     private var workspaceColumn: some View {
-        VStack(spacing: 0) {
-            if let task = selectedTaskSnapshot {
-                let entries = selectedTaskEntriesSnapshot
-                workspaceHeader(task)
-                Divider()
-                GeometryReader { geometry in
-                    ScrollViewReader { scrollProxy in
-                        ScrollView {
-                            VStack(spacing: 10) {
-                                automaticLoadOlderMessagesSentinel(for: task)
-                                let availableFeedWidth = max(geometry.size.width - 16, 320)
-                                ForEach(entries) { entry in
-                                    workspaceFeedRow(entry, availableWidth: availableFeedWidth)
-                                        .id(entry.id)
-                                        .transition(workspaceFeedEntryTransition(for: entry))
+        ZStack {
+            workspaceCanvasBackground
+
+            VStack(spacing: 0) {
+                if let task = selectedTaskViewTask {
+                    let entries = selectedTaskEntriesSnapshot
+                    workspaceHeader(task)
+                    Divider()
+                        .overlay(Color.black.opacity(colorScheme == .dark ? 0.18 : 0.06))
+                    GeometryReader { geometry in
+                        ScrollViewReader { scrollProxy in
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: 18) {
+                                    automaticLoadOlderMessagesSentinel(for: task)
+                                        .frame(maxWidth: 860)
+                                    let availableFeedWidth = max(geometry.size.width - 48, 320)
+                                    ForEach(entries) { entry in
+                                        workspaceFeedRow(entry, task: task, availableWidth: availableFeedWidth)
+                                            .id(entry.id)
+                                            .transition(workspaceFeedEntryTransition(for: entry))
+                                    }
+                                    Color.clear
+                                        .frame(height: 1)
+                                        .id(workspaceBottomAnchorID(for: task.taskID))
                                 }
-                                Color.clear
-                                    .frame(height: 1)
-                                    .id(workspaceBottomAnchorID(for: task.taskID))
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 24)
+                                .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .top)
+                                .animation(
+                                    animatedWorkspaceTaskID == task.taskID
+                                        ? .spring(response: 0.46, dampingFraction: 0.90, blendDuration: 0.20)
+                                        : nil,
+                                    value: workspaceFeedAnimationKey(taskID: task.taskID, entries: entries)
+                                )
                             }
-                            .padding(.vertical, 12)
-                            .padding(.horizontal, 8)
-                            .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .bottomLeading)
-                            .animation(.spring(response: 0.46, dampingFraction: 0.90, blendDuration: 0.20), value: workspaceFeedAnimationKey(entries))
-                        }
-                        .background(
-                            WorkspaceScrollObserver(
-                                metrics: $workspaceScrollMetrics,
-                                command: $workspaceScrollCommand
+                            .background(
+                                WorkspaceScrollObserver(
+                                    metrics: $workspaceScrollMetrics,
+                                    command: $workspaceScrollCommand
+                                )
                             )
-                        )
-                        .onAppear {
-                            shouldAutoScrollSelectedTask = true
-                            pendingForcedAutoScrollTaskID = task.taskID
-                            queueWorkspaceScrollToBottom(using: scrollProxy, for: task.taskID, force: true)
-                        }
-                        .onChange(of: task.taskID) { _, _ in
-                            autoLoadingOlderTaskID = nil
-                            automaticOlderLoadingEnabledTaskID = nil
-                            shouldAutoScrollSelectedTask = true
-                            pendingForcedAutoScrollTaskID = task.taskID
-                            workspaceScrollMetrics = WorkspaceScrollMetrics()
-                            queueWorkspaceScrollToBottom(using: scrollProxy, for: task.taskID, force: true)
-                        }
-                        .onChange(of: workspaceFeedTailAnchor(entries)) { _, _ in
-                            if shouldAutoScrollSelectedTask || pendingForcedAutoScrollTaskID == task.taskID {
-                                queueWorkspaceScrollToBottom(using: scrollProxy, for: task.taskID)
-                            }
-                        }
-                        .onChange(of: workspaceScrollMetrics) { _, newMetrics in
-                            if newMetrics.viewportHeight > 0,
-                               newMetrics.contentHeight > 0,
-                               pendingForcedAutoScrollTaskID != task.taskID {
-                                shouldAutoScrollSelectedTask = newMetrics.isNearBottom
-                            }
-                            if pendingForcedAutoScrollTaskID == task.taskID, newMetrics.isNearBottom {
-                                pendingForcedAutoScrollTaskID = nil
+                            .onAppear {
+                                prepareWorkspaceFeedAnimation(for: task.taskID)
                                 shouldAutoScrollSelectedTask = true
+                                pendingForcedAutoScrollTaskID = task.taskID
+                                queueWorkspaceScrollToBottom(using: scrollProxy, for: task.taskID, force: true)
                             }
-                            if automaticOlderLoadingEnabledTaskID != task.taskID,
-                               workspaceScrollCommand == nil,
-                               newMetrics.viewportHeight > 0,
-                               newMetrics.contentHeight > 0,
-                                newMetrics.isNearBottom {
-                                automaticOlderLoadingEnabledTaskID = task.taskID
+                            .onChange(of: task.taskID) { _, _ in
+                                prepareWorkspaceFeedAnimation(for: task.taskID)
+                                autoLoadingOlderTaskID = nil
+                                automaticOlderLoadingEnabledTaskID = nil
+                                shouldAutoScrollSelectedTask = true
+                                pendingForcedAutoScrollTaskID = task.taskID
+                                workspaceScrollMetrics = WorkspaceScrollMetrics()
+                                queueWorkspaceScrollToBottom(using: scrollProxy, for: task.taskID, force: true)
+                            }
+                            .onChange(of: workspaceFeedTailAnchor(entries, task: task)) { _, _ in
+                                if shouldAutoScrollSelectedTask || pendingForcedAutoScrollTaskID == task.taskID {
+                                    queueWorkspaceScrollToBottom(using: scrollProxy, for: task.taskID)
+                                }
+                            }
+                            .onChange(of: workspaceScrollMetrics) { _, newMetrics in
+                                if newMetrics.viewportHeight > 0,
+                                   newMetrics.contentHeight > 0,
+                                   pendingForcedAutoScrollTaskID != task.taskID {
+                                    shouldAutoScrollSelectedTask = newMetrics.isNearBottom
+                                }
+                                if pendingForcedAutoScrollTaskID == task.taskID, newMetrics.isNearBottom {
+                                    pendingForcedAutoScrollTaskID = nil
+                                    shouldAutoScrollSelectedTask = true
+                                }
+                                if automaticOlderLoadingEnabledTaskID != task.taskID,
+                                   workspaceScrollCommand == nil,
+                                   newMetrics.viewportHeight > 0,
+                                   newMetrics.contentHeight > 0,
+                                   newMetrics.isNearBottom {
+                                    automaticOlderLoadingEnabledTaskID = task.taskID
+                                }
                             }
                         }
                     }
-                }
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        newTaskHero
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 24) {
+                            newTaskHero
+                                .frame(maxWidth: 860)
+                        }
+                        .padding(24)
+                        .frame(maxWidth: .infinity, alignment: .top)
                     }
-                    .padding(24)
                 }
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            workspaceComposerInset(task: selectedTaskSnapshot)
+            workspaceComposerInset(task: selectedTaskViewTask)
         }
     }
 
     private func workspaceComposerInset(task: Task?) -> some View {
         VStack(spacing: 0) {
-            if let task, shouldShowWorkspaceRunningStatusBar(for: task) {
-                workspaceRunningStatusBar(for: task)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 12)
-                    .padding(.bottom, 8)
-                    .background(.ultraThinMaterial)
-            }
             Divider()
+                .overlay(Color.black.opacity(colorScheme == .dark ? 0.16 : 0.05))
             workspaceComposer(task: task)
-                .padding(20)
+                .padding(.horizontal, 24)
+                .padding(.top, 14)
+                .padding(.bottom, 18)
                 .background(.ultraThinMaterial)
         }
     }
@@ -420,33 +454,22 @@ struct DashboardView: View {
         return workspaceStreamingPreview(for: task) == nil
     }
 
-    private func workspaceRunningStatusBar(for task: Task) -> some View {
-        HStack(spacing: 10) {
+    private func workspaceHeaderRunStatusPill(for task: Task) -> some View {
+        HStack(spacing: 8) {
             ProgressView()
                 .controlSize(.small)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Hermes is working")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.primary)
-
-                Text(task.runState.phaseLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer(minLength: 12)
-
-            Text("See Task progress in Inspector")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Text(appState.systemText(task.runState.phaseLabel))
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.blue)
+                .lineLimit(1)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.blue.opacity(0.10), in: Capsule())
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.blue.opacity(0.12), lineWidth: 1)
+            Capsule()
+                .stroke(Color.blue.opacity(0.16), lineWidth: 1)
         )
     }
 
@@ -529,6 +552,36 @@ struct DashboardView: View {
         }
     }
 
+    private var workspaceCanvasBackground: some View {
+        ZStack {
+            LinearGradient(
+                colors: workspaceCanvasGradientColors,
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            Rectangle()
+                .fill(Color.white.opacity(colorScheme == .dark ? 0.02 : 0.28))
+                .blur(radius: colorScheme == .dark ? 0 : 36)
+        }
+        .ignoresSafeArea()
+    }
+
+    private var workspaceCanvasGradientColors: [Color] {
+        if colorScheme == .dark {
+            return [
+                Color(nsColor: .windowBackgroundColor),
+                Color.black.opacity(0.92)
+            ]
+        }
+
+        return [
+            Color(red: 0.98, green: 0.96, blue: 0.89),
+            Color(red: 0.97, green: 0.94, blue: 0.86),
+            Color(red: 0.95, green: 0.93, blue: 0.87)
+        ]
+    }
+
     private func workspaceHeader(_ task: Task) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 16) {
@@ -542,6 +595,9 @@ struct DashboardView: View {
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
                             .background(workspaceSessionStatusTint(for: task).opacity(0.12), in: Capsule())
+                        if shouldShowWorkspaceRunningStatusBar(for: task) {
+                            workspaceHeaderRunStatusPill(for: task)
+                        }
                     }
 
                     Text(workspaceHeadlineSummary(for: task))
@@ -554,7 +610,7 @@ struct DashboardView: View {
                         workspaceMetaPill(systemImage: "person.crop.circle", text: appState.displayName(forAgentID: task.agentID), tint: .accentColor)
                         workspaceMetaPill(systemImage: "calendar", text: task.updatedAt.formatted(date: .abbreviated, time: .shortened), tint: .secondary)
                         if task.isPreview {
-                            workspaceMetaPill(systemImage: "sparkles", text: "Preview", tint: .secondary)
+                            workspaceMetaPill(systemImage: "sparkles", text: appState.text(zh: "示例", en: "Preview"), tint: .secondary)
                         }
                     }
                 }
@@ -571,7 +627,7 @@ struct DashboardView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color.white.opacity(colorScheme == .dark ? 0.04 : 0.38))
     }
 
     private var newTaskHero: some View {
@@ -587,50 +643,59 @@ struct DashboardView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(Color.white.opacity(colorScheme == .dark ? 0.06 : 0.74))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(Color.black.opacity(colorScheme == .dark ? 0.16 : 0.06), lineWidth: 1)
+        )
     }
 
     private func workspaceStatusStrip(_ task: Task) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 12) {
                 workspaceStatusCard(
-                    title: "Phase",
-                    value: task.runState.phaseLabel,
+                    title: appState.text(zh: "阶段", en: "Phase"),
+                    value: appState.systemText(task.runState.phaseLabel),
                     tint: workspaceSessionStatusTint(for: task),
                     systemImage: workspaceSessionStatusSymbol(for: task)
                 )
                 workspaceStatusCard(
-                    title: "Queue focus",
+                    title: appState.text(zh: "当前重点", en: "Queue focus"),
                     value: workspaceQueueFocusTitle(for: task),
                     tint: workspaceQueueFocusTint(for: task),
                     systemImage: workspaceQueueFocusSymbol(for: task)
                 )
                 if let streamingSummary = workspaceStreamingPreview(for: task) {
                     workspaceStatusCard(
-                        title: "Streaming",
+                        title: appState.text(zh: "流式输出", en: "Streaming"),
                         value: streamingSummary,
                         tint: .blue,
                         systemImage: "ellipsis.message"
                     )
                 } else if task.sessionStatus == .running {
                     workspaceStatusCard(
-                        title: "Progress",
-                        value: "Hermes is working through the task. Detailed tool, terminal, and agent activity stays in Task progress.",
+                        title: appState.text(zh: "进展", en: "Progress"),
+                        value: appState.text(zh: "Hermes 正在处理这个任务。更细的工具、终端和 Agent 活动会显示在“任务进展”里。", en: "Hermes is working through the task. Detailed tool, terminal, and agent activity stays in Task progress."),
                         tint: .blue,
                         systemImage: "chart.bar.doc.horizontal"
                     )
                 }
                 if let observationStatusLine = task.runState.observationStatusLine {
                     workspaceStatusCard(
-                        title: "Live feed",
-                        value: observationStatusLine,
+                        title: appState.text(zh: "实时流", en: "Live feed"),
+                        value: appState.systemText(observationStatusLine),
                         tint: .orange,
                         systemImage: "bolt.horizontal.circle"
                     )
                 }
                 if task.sessionStatus != .running, let resultSummary = workspaceResultSummary(for: task) {
                     workspaceStatusCard(
-                        title: task.state == .succeeded ? "Result" : "Latest useful answer",
+                        title: task.state == .succeeded
+                            ? appState.text(zh: "结果", en: "Result")
+                            : appState.text(zh: "最新有效回复", en: "Latest useful answer"),
                         value: resultSummary,
                         tint: task.state == .succeeded ? .green : .secondary,
                         systemImage: task.state == .succeeded ? "shippingbox" : "text.alignleft"
@@ -643,7 +708,7 @@ struct DashboardView: View {
     private func workspaceTaskBrief(_ task: Task) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top) {
-                Label("Task overview", systemImage: "square.text.square")
+                Label(appState.text(zh: "任务概览", en: "Task overview"), systemImage: "square.text.square")
                     .font(.headline)
                 Spacer(minLength: 12)
                 Text(workspaceSessionStatusTitle(for: task))
@@ -655,33 +720,40 @@ struct DashboardView: View {
             }
 
             workspaceBriefMetric(
-                title: "Goal",
+                title: appState.text(zh: "目标", en: "Goal"),
                 value: task.requestText ?? task.title,
                 tint: .secondary
             )
             workspaceBriefMetric(
-                title: "Current",
+                title: appState.text(zh: "当前", en: "Current"),
                 value: workspaceCurrentFocusSummary(for: task),
                 tint: workspaceSessionStatusTint(for: task)
             )
 
             if let statusLine = workspaceOverviewStatusLine(for: task) {
                 workspaceBriefMetric(
-                    title: "Status",
+                    title: appState.text(zh: "状态", en: "Status"),
                     value: statusLine,
                     tint: .secondary
                 )
             }
 
             if let sessionBindingSummary = task.sessionBindingSummary {
-                Text(sessionBindingSummary)
+                Text(appState.systemText(sessionBindingSummary))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color.white.opacity(colorScheme == .dark ? 0.06 : 0.74))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color.black.opacity(colorScheme == .dark ? 0.14 : 0.06), lineWidth: 1)
+        )
     }
 
     private func workspaceBriefMetric(title: String, value: String, tint: Color) -> some View {
@@ -698,19 +770,10 @@ struct DashboardView: View {
     }
 
     private func workspaceOverviewStatusLine(for task: Task) -> String? {
-        if let waitingReason = task.runState.waitingReason, waitingReason.isEmpty == false {
-            return waitingReason
+        if let cached = cachedDerivedSnapshot(for: task) {
+            return cached.overviewStatusLine
         }
-        if let failureMessage = task.runState.failureMessage, failureMessage.isEmpty == false {
-            return failureMessage
-        }
-        if let progressHint = task.runState.progressHint, progressHint.isEmpty == false {
-            return progressHint
-        }
-        if let observationStatusLine = task.runState.observationStatusLine, observationStatusLine.isEmpty == false {
-            return observationStatusLine
-        }
-        return workspaceResultSummary(for: task)?.workspaceSnippet(maxLength: 180)
+        return makeWorkspaceOverviewStatusLine(for: task, resultSummary: workspaceResultSummary(for: task))
     }
 
     private func workspaceBanner(title: String, body: String, tint: Color, systemImage: String) -> some View {
@@ -739,12 +802,21 @@ struct DashboardView: View {
                 .multilineTextAlignment(.leading)
         }
         .padding(14)
-        .frame(width: 200, alignment: .leading)
-        .background(tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .frame(width: 220, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.white.opacity(colorScheme == .dark ? 0.05 : 0.68))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(tint.opacity(colorScheme == .dark ? 0.22 : 0.18), lineWidth: 1)
+        )
     }
 
-    private func workspaceFeedRow(_ entry: WorkspaceFeedEntry, availableWidth: CGFloat) -> some View {
+    @ViewBuilder
+    private func workspaceFeedRow(_ entry: WorkspaceFeedEntry, task: Task, availableWidth: CGFloat) -> some View {
         let palette = workspaceBubblePalette(for: entry)
+        let body = workspaceEntryBody(entry, task: task)
         let titleColor: Color = entry.alignment == .trailing ? Color.white.opacity(0.96) : entry.tint
         let bodyColor: Color = entry.alignment == .trailing ? Color.white : Color.primary
         let footerColor: Color = entry.alignment == .trailing ? Color.white.opacity(0.74) : Color.secondary
@@ -752,36 +824,72 @@ struct DashboardView: View {
         let shouldShowHeader = entry.title.isEmpty == false
         let edgePadding = workspaceFeedEdgePadding(for: availableWidth)
         let oppositeInset = workspaceFeedOppositeInset(for: availableWidth)
+        let bubbleContentAlignment: HorizontalAlignment = entry.alignment == .trailing ? .trailing : .leading
         let bubbleMaxWidth = workspaceBubbleMaxWidth(
             for: availableWidth,
             oppositeInset: oppositeInset,
             edgePadding: edgePadding
         )
         let bubbleMinWidth = workspaceBubbleMinWidth(for: entry, availableWidth: bubbleMaxWidth)
-        let bubbleWidth = workspaceBubbleWidth(
-            for: entry,
-            bubbleMaxWidth: bubbleMaxWidth,
-            minimumWidth: bubbleMinWidth
-        )
-        let contentWidth = max(bubbleWidth - 32, 120)
+        let contentMaxWidth = max(bubbleMaxWidth - 32, 120)
 
-        let bubble = VStack(alignment: .leading, spacing: 10) {
+        if workspaceUsesPlainAssistantLayout(for: entry) {
+            VStack(alignment: .leading, spacing: 10) {
                 if shouldShowHeader {
                     Text(entry.title)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(titleColor)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .foregroundStyle(entry.tint)
                 }
 
                 Group {
                     if entry.monospaced {
-                        Text(entry.body)
+                        Text(body)
                             .font(.subheadline.monospaced())
                             .fixedSize(horizontal: false, vertical: true)
-                            .frame(width: contentWidth, alignment: .leading)
                     } else {
-                        workspaceBodyView(entry)
-                            .frame(width: contentWidth, alignment: .leading)
+                        workspaceBodyView(entry, task: task)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .foregroundStyle(Color.primary)
+                .textSelection(.enabled)
+
+                if let footer = entry.footer {
+                    Text(footer)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, edgePadding + 4)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            let bubble = VStack(alignment: bubbleContentAlignment, spacing: 10) {
+                if shouldShowHeader {
+                    Text(entry.title)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(titleColor)
+                        .frame(
+                            maxWidth: entry.alignment == .trailing ? nil : contentMaxWidth,
+                            alignment: entry.alignment == .trailing ? .trailing : .leading
+                        )
+                }
+
+                Group {
+                    if entry.monospaced {
+                        Text(body)
+                            .font(.subheadline.monospaced())
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(
+                                maxWidth: entry.alignment == .trailing ? nil : contentMaxWidth,
+                                alignment: entry.alignment == .trailing ? .trailing : .leading
+                            )
+                    } else {
+                        workspaceBodyView(entry, task: task)
+                            .frame(
+                                maxWidth: entry.alignment == .trailing ? nil : contentMaxWidth,
+                                alignment: entry.alignment == .trailing ? .trailing : .leading
+                            )
                     }
                 }
                 .foregroundStyle(bodyColor)
@@ -792,34 +900,39 @@ struct DashboardView: View {
                         .font(.caption)
                         .foregroundStyle(footerColor)
                         .frame(
-                            maxWidth: .infinity,
+                            maxWidth: entry.alignment == .trailing ? nil : contentMaxWidth,
                             alignment: entry.alignment == .trailing ? .trailing : .leading
                         )
                 }
             }
-            .padding(.top, 14)
-            .padding(.horizontal, 16)
-            .padding(.bottom, 14)
-            .frame(width: bubbleWidth, alignment: .leading)
-            .background {
-                workspaceFeedBubbleBackground(for: entry, palette: palette)
+                .padding(.top, 14)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 14)
+                .frame(minWidth: bubbleMinWidth > 0 ? bubbleMinWidth : nil, alignment: .leading)
+                .background {
+                    workspaceFeedBubbleBackground(for: entry, palette: palette)
+                }
+
+            HStack(alignment: .center, spacing: 10) {
+                if entry.alignment == .trailing { Spacer(minLength: oppositeInset) }
+
+                if entry.alignment == .trailing, entry.showsProgress {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(progressTint)
+                }
+
+                bubble
+
+                if entry.alignment == .leading { Spacer(minLength: oppositeInset) }
             }
-
-        return HStack(alignment: .center, spacing: 10) {
-            if entry.alignment == .trailing { Spacer(minLength: oppositeInset) }
-
-            if entry.alignment == .trailing, entry.showsProgress {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(progressTint)
-            }
-
-            bubble
-
-            if entry.alignment == .leading { Spacer(minLength: oppositeInset) }
+            .padding(.horizontal, edgePadding)
+            .frame(maxWidth: .infinity)
         }
-        .padding(.horizontal, edgePadding)
-        .frame(maxWidth: .infinity)
+    }
+
+    private func workspaceUsesPlainAssistantLayout(for entry: WorkspaceFeedEntry) -> Bool {
+        entry.alignment == .leading && entry.monospaced == false && (entry.usesMarkdown || entry.isStreamingMarkdown)
     }
 
     @ViewBuilder
@@ -855,10 +968,14 @@ struct DashboardView: View {
                 )
             }
             return WorkspaceBubblePalette(
-                top: Color.white,
-                bottom: Color(red: 0.97, green: 0.97, blue: 0.98),
-                stroke: Color.black.opacity(0.055),
-                shadow: Color.black.opacity(0.022)
+                top: Color(
+                    nsColor: colorScheme == .dark ? .controlBackgroundColor : .textBackgroundColor
+                ),
+                bottom: Color(
+                    nsColor: colorScheme == .dark ? .windowBackgroundColor : .controlBackgroundColor
+                ),
+                stroke: colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.055),
+                shadow: Color.black.opacity(colorScheme == .dark ? 0.18 : 0.022)
             )
         case .success:
             return WorkspaceBubblePalette(
@@ -940,7 +1057,7 @@ struct DashboardView: View {
                     submitComposer(for: task)
                 } label: {
                     if appState.isStartingRun {
-                        Label("Starting…", systemImage: "hourglass")
+                        Label(appState.text(zh: "启动中…", en: "Starting…"), systemImage: "hourglass")
                     } else {
                         Label(task == nil ? appState.text(zh: "新建任务", en: "New Task") : appState.text(zh: "发送", en: "Send"), systemImage: "paperplane.fill")
                     }
@@ -953,43 +1070,30 @@ struct DashboardView: View {
 
     private var inspectorColumn: some View {
         Group {
-            if let task = selectedTaskSnapshot {
+            if let task = selectedTaskViewTask {
                 VStack(alignment: .leading, spacing: 16) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Inspector")
+                        Text(appState.text(zh: "检查面板", en: "Inspector"))
                             .font(.title3.weight(.semibold))
-                        Text("Status, steps, logs, and recovery tools for the selected task.")
+                        Text(appState.text(zh: "查看当前所选任务的状态、步骤、日志和恢复工具。", en: "Status, steps, logs, and recovery tools for the selected task."))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 20)
 
-                    Picker("Inspector tab", selection: $inspectorTab) {
-                        ForEach(WorkspaceInspectorTab.allCases) { tab in
-                            Text(tab.title).tag(tab)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal, 20)
-
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
-                            switch inspectorTab {
-                            case .overview:
-                                inspectorOverview(task)
-                            case .artifacts:
-                                inspectorArtifacts(task)
-                            }
+                            inspectorOverview(task)
                         }
                         .padding(20)
                     }
                 }
             } else {
                 ContentUnavailableView(
-                    "Choose a task",
+                    appState.text(zh: "请选择一个任务", en: "Choose a task"),
                     systemImage: "sidebar.right",
-                    description: Text("Pick a task from the left to inspect status, steps, logs, and recovery details.")
+                    description: Text(appState.text(zh: "从左侧选择一个任务，以查看状态、步骤、日志和恢复细节。", en: "Pick a task from the left to inspect status, steps, logs, and recovery details."))
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(24)
@@ -999,20 +1103,22 @@ struct DashboardView: View {
 
     private func inspectorOverview(_ task: Task) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            inspectorCard(title: "Now / Next", systemImage: task.state.symbolName) {
+            inspectorTaskSummary(task)
+
+            inspectorCard(title: appState.text(zh: "当前 / 下一步", en: "Now / Next"), systemImage: task.state.symbolName) {
                 VStack(alignment: .leading, spacing: 10) {
-                    inspectorLine(label: "Status", value: inspectorStatusValue(for: task))
-                    inspectorLine(label: "Current phase", value: inspectorPhaseValue(for: task))
-                    inspectorLine(label: "Last update", value: task.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                    inspectorLine(label: appState.text(zh: "状态", en: "Status"), value: inspectorStatusValue(for: task))
+                    inspectorLine(label: appState.text(zh: "最近更新", en: "Last update"), value: task.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                    inspectorLine(label: appState.text(zh: "建议下一步", en: "Recommended next step"), value: inspectorNextStepValue(for: task))
 
                     if let waitingReason = task.runState.waitingReason {
-                        inspectorLine(label: "Waiting on", value: waitingReason)
+                        inspectorLine(label: appState.text(zh: "等待原因", en: "Waiting on"), value: appState.systemText(waitingReason))
                     }
                     if let pendingAction = task.pendingAction {
-                        inspectorLine(label: "Action in flight", value: "\(pendingAction.actionIndicator) \(pendingAction.displayTitle)")
+                        inspectorLine(label: appState.text(zh: "执行中的动作", en: "Action in flight"), value: "\(pendingAction.actionIndicator) \(pendingAction.localizedDisplayTitle)")
                     }
                     if let observationStatusLine = task.runState.observationStatusLine {
-                        inspectorLine(label: "Live feed", value: observationStatusLine)
+                        inspectorLine(label: appState.text(zh: "实时流", en: "Live feed"), value: appState.systemText(observationStatusLine))
                     }
                 }
             }
@@ -1034,15 +1140,15 @@ struct DashboardView: View {
                     performAction: { action in appState.performTaskAction(action, for: task.taskID) }
                 )
             } else if let observationStatusLine = task.runState.observationStatusLine, task.isPreview == false, task.state.isTerminal == false {
-                inspectorCard(title: "Live feed", systemImage: "bolt.horizontal.circle") {
+                inspectorCard(title: appState.text(zh: "实时流", en: "Live feed"), systemImage: "bolt.horizontal.circle") {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text(observationStatusLine)
+                        Text(appState.systemText(observationStatusLine))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                         Button {
                             appState.reconnectLiveFeed(for: task.taskID)
                         } label: {
-                            Label("Reconnect live feed", systemImage: "bolt.horizontal.circle")
+                            Label(appState.text(zh: "重连实时流", en: "Reconnect live feed"), systemImage: "bolt.horizontal.circle")
                         }
                         .buttonStyle(.bordered)
                     }
@@ -1050,27 +1156,41 @@ struct DashboardView: View {
             }
 
             if let feedback = appState.taskActionFeedback, appState.selectedTaskID == task.taskID {
-                inspectorCard(title: "Hermes Desk action", systemImage: "checkmark.message") {
-                    Text(feedback)
+                inspectorCard(title: appState.text(zh: "Hermes Desk 动作反馈", en: "Hermes Desk action"), systemImage: "checkmark.message") {
+                    Text(appState.systemText(feedback))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
             }
 
             if supplementalInspectorActions(for: task).isEmpty == false {
-                inspectorCard(title: "Quick actions", systemImage: "slider.horizontal.3") {
+                inspectorCard(title: appState.text(zh: "快捷动作", en: "Quick actions"), systemImage: "slider.horizontal.3") {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(supplementalInspectorActions(for: task), id: \.rawValue) { action in
                             Button {
                                 appState.performTaskAction(action, for: task.taskID)
                             } label: {
-                                Label(action.displayTitle, systemImage: action.symbolName)
+                                Label(action.localizedDisplayTitle, systemImage: action.symbolName)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .buttonStyle(.bordered)
                             .disabled(isActionEnabled(action, for: task) == false)
                         }
                     }
+                }
+            }
+        }
+    }
+
+    private func inspectorTaskSummary(_ task: Task) -> some View {
+        inspectorCard(title: appState.text(zh: "任务摘要", en: "Task summary"), systemImage: "square.text.square") {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(inspectorSummaryFields(for: task)) { field in
+                    inspectorSummaryLine(
+                        id: field.id,
+                        label: field.label,
+                        value: field.value
+                    )
                 }
             }
         }
@@ -1114,7 +1234,43 @@ struct DashboardView: View {
             }
         }
 
-        return task.runState.phaseLabel
+        return appState.systemText(task.runState.phaseLabel)
+    }
+
+    private func inspectorNextStepValue(for task: Task) -> String {
+        if let pendingAction = task.pendingAction {
+            return appState.text(
+                zh: "等待“\(pendingAction.localizedDisplayTitle)”处理完成",
+                en: "Waiting for \(pendingAction.localizedDisplayTitle) to settle"
+            )
+        }
+
+        if task.sessionStatus == .open {
+            return appState.text(zh: "可以继续追问或补充上下文", en: "Continue the conversation or add more context")
+        }
+        if task.sessionStatus == .archived {
+            return appState.text(zh: "查看结果、文件或关联运行", en: "Review results, files, or linked runs")
+        }
+
+        switch task.state {
+        case .waitingUser:
+            return appState.text(zh: "先处理确认，再决定是否继续", en: "Resolve the approval request before continuing")
+        case .failed:
+            return appState.text(zh: "先看失败原因，再决定是恢复还是重试", en: "Review the failure, then recover or retry")
+        case .running:
+            if task.runState.observationState != .live {
+                return appState.text(zh: "先重连实时流，再继续观察执行情况", en: "Reconnect the live feed, then continue monitoring")
+            }
+            return appState.text(zh: "等待 Hermes 继续执行，必要时查看下方进展", en: "Let Hermes continue running and inspect progress below if needed")
+        case .queued:
+            return appState.text(zh: "等待前序动作完成", en: "Wait for the preceding work to finish")
+        case .paused:
+            return appState.text(zh: "恢复任务或继续保持暂停", en: "Resume the task or keep it paused")
+        case .succeeded:
+            return appState.text(zh: "复查结果，必要时继续追问", en: "Review the result and follow up if needed")
+        case .cancelled:
+            return appState.text(zh: "如需继续，请发起新任务或查看历史结果", en: "Start a new task or review prior results if work should continue")
+        }
     }
 
     @ViewBuilder
@@ -1123,9 +1279,11 @@ struct DashboardView: View {
         let milestoneEvents = taskMilestoneEvents(for: task)
 
         VStack(alignment: .leading, spacing: 16) {
-            inspectorCard(title: "Task progress", systemImage: "list.bullet.rectangle") {
+            inspectorCard(title: appState.text(zh: "任务进展", en: "Task progress"), systemImage: "list.bullet.rectangle") {
                 if progressSections.isEmpty {
-                    Text(task.isPreview ? "Preview tasks do not carry detailed live execution activity yet." : "Detailed tool, terminal, and streaming activity will appear here.")
+                    Text(task.isPreview
+                        ? appState.text(zh: "示例任务暂时还不携带详细的实时执行活动。", en: "Preview tasks do not carry detailed live execution activity yet.")
+                        : appState.text(zh: "更细的工具、终端和流式活动会显示在这里。", en: "Detailed tool, terminal, and streaming activity will appear here."))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 } else {
@@ -1137,7 +1295,7 @@ struct DashboardView: View {
                         )
                         if summaryLines.isEmpty == false {
                             VStack(alignment: .leading, spacing: 10) {
-                                Text("Execution summary")
+                                Text(appState.text(zh: "执行摘要", en: "Execution summary"))
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(.secondary)
 
@@ -1168,30 +1326,35 @@ struct DashboardView: View {
             }
 
             if shouldShowInspectorLatestAnswer(for: task) {
-                inspectorCard(title: task.sessionStatus == .running ? "Latest streamed answer" : "Latest useful answer", systemImage: "text.alignleft") {
+                inspectorCard(title: task.sessionStatus == .running
+                    ? appState.text(zh: "最新流式回复", en: "Latest streamed answer")
+                    : appState.text(zh: "最新有效回复", en: "Latest useful answer"), systemImage: "text.alignleft") {
                     Text(workspaceResultSummary(for: task) ?? workspaceCurrentFocusSummary(for: task))
                         .font(.callout)
                         .foregroundStyle(.primary)
                         .textSelection(.enabled)
                 }
             }
+
+            inspectorArtifacts(task)
         }
     }
 
     private func shouldShowInspectorLatestAnswer(for task: Task) -> Bool {
-        guard let resultSummary = workspaceResultSummary(for: task), resultSummary.isEmpty == false else {
-            return false
-        }
-
-        if task.sessionStatus == .running {
-            return workspaceStreamingPreview(for: task) != nil
+        if let cached = cachedDerivedSnapshot(for: task) {
+            return cached.shouldShowInspectorLatestAnswer
         }
 
         let transcriptMessages = appState.transcriptMessages(for: task)
-        let hasVisibleAssistantMessage = transcriptMessages.contains { message in
-            message.role == .assistant && task.shouldDisplayMessageInWorkspaceConversation(message)
-        }
-        return hasVisibleAssistantMessage == false
+        return makeShouldShowInspectorLatestAnswer(
+            for: task,
+            transcriptMessages: transcriptMessages,
+            streamingPreview: makeStreamingPreview(
+                for: task,
+                streamingText: workspaceStreamingText(for: task, transcriptMessages: transcriptMessages)
+            ),
+            resultSummary: workspaceResultSummary(for: task)
+        )
     }
 
     private func inspectorExecutionSummaryLines(
@@ -1203,7 +1366,7 @@ struct DashboardView: View {
 
         if let latestMilestone = milestoneEvents.first {
             lines.append((
-                label: "Latest milestone",
+                label: appState.text(zh: "最新里程碑", en: "Latest milestone"),
                 value: workspaceEventHeadline(for: latestMilestone)
             ))
         }
@@ -1211,7 +1374,7 @@ struct DashboardView: View {
         let recentTools = recentProgressToolDisplayNames(for: task)
         if recentTools.isEmpty == false {
             lines.append((
-                label: "Recent tools",
+                label: appState.text(zh: "最近工具", en: "Recent tools"),
                 value: recentTools.joined(separator: " • ")
             ))
         }
@@ -1221,8 +1384,8 @@ struct DashboardView: View {
         } + milestoneEvents.count
         if totalUpdates > 0 {
             lines.append((
-                label: "Captured updates",
-                value: "\(totalUpdates) recent event\(totalUpdates == 1 ? "" : "s")"
+                label: appState.text(zh: "已捕获更新", en: "Captured updates"),
+                value: appState.text(zh: "\(totalUpdates) 条最近事件", en: "\(totalUpdates) recent event\(totalUpdates == 1 ? "" : "s")")
             ))
         }
 
@@ -1251,39 +1414,43 @@ struct DashboardView: View {
     private func inspectorArtifacts(_ task: Task) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             if task.isPreview, let artifact = task.artifact {
-                inspectorCard(title: "Result snapshot", systemImage: "shippingbox") {
+                inspectorCard(title: appState.text(zh: "结果快照", en: "Result snapshot"), systemImage: "shippingbox") {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text(artifact.summary)
+                        Text(appState.systemText(artifact.summary))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
 
                         if artifact.keyOutputs.isEmpty == false {
-                            inspectorBulletList(title: "Key outputs", items: Array(artifact.keyOutputs.prefix(3)))
+                            inspectorBulletList(title: appState.text(zh: "关键产出", en: "Key outputs"), items: Array(artifact.keyOutputs.prefix(3).map(appState.systemText)))
                         }
                         if artifact.files.isEmpty == false {
-                            inspectorBulletList(title: "Files", items: Array(artifact.files.prefix(3).map(\.path)))
+                            inspectorBulletList(title: appState.text(zh: "文件", en: "Files"), items: Array(artifact.files.prefix(3).map(\.path)))
                         }
                         if artifact.nextActions.isEmpty == false {
-                            inspectorBulletList(title: "Next", items: Array(artifact.nextActions.prefix(2)))
+                            inspectorBulletList(title: appState.text(zh: "下一步", en: "Next"), items: Array(artifact.nextActions.prefix(2).map(appState.systemText)))
                         }
                     }
                 }
             } else {
-                inspectorCard(title: task.isPreview ? "Result snapshot" : "Conversation source", systemImage: task.isPreview ? "shippingbox" : "ellipsis.message") {
-                    Text(task.isPreview ? (task.latestOutputSummary ?? "This task has not emitted a structured artifact yet.") : "This task behaves like a conversation thread. The center transcript is the source of truth, not a separate result snapshot.")
+                inspectorCard(title: task.isPreview
+                    ? appState.text(zh: "结果快照", en: "Result snapshot")
+                    : appState.text(zh: "对话源", en: "Conversation source"), systemImage: task.isPreview ? "shippingbox" : "ellipsis.message") {
+                    Text(task.isPreview
+                        ? (task.latestOutputSummary ?? appState.text(zh: "这个任务还没有产出结构化结果。", en: "This task has not emitted a structured artifact yet."))
+                        : appState.text(zh: "这个任务的行为更像一条对话线程。中间的对话记录才是事实来源，而不是单独的结果快照。", en: "This task behaves like a conversation thread. The center transcript is the source of truth, not a separate result snapshot."))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
             }
 
             if task.retryParentTaskID != nil || task.retryChildTaskID != nil {
-                inspectorCard(title: "Linked runs", systemImage: "arrow.triangle.branch") {
+                inspectorCard(title: appState.text(zh: "关联运行", en: "Linked runs"), systemImage: "arrow.triangle.branch") {
                     VStack(alignment: .leading, spacing: 10) {
                         if let retryParentTaskID = task.retryParentTaskID {
-                            inspectorLine(label: "Retried from", value: retryParentTaskID)
+                            inspectorLine(label: appState.text(zh: "重试来源", en: "Retried from"), value: retryParentTaskID)
                         }
                         if let retryChildTaskID = task.retryChildTaskID {
-                            inspectorLine(label: "Replacement run", value: retryChildTaskID)
+                            inspectorLine(label: appState.text(zh: "替代运行", en: "Replacement run"), value: retryChildTaskID)
                         }
                     }
                 }
@@ -1291,22 +1458,22 @@ struct DashboardView: View {
 
             DisclosureGroup {
                 VStack(alignment: .leading, spacing: 10) {
-                    inspectorLine(label: "Task ID", value: task.taskID)
-                    inspectorLine(label: "Agent", value: appState.displayName(forAgentID: task.agentID))
-                    inspectorLine(label: "Feed", value: task.isPreview ? "Preview sample" : "Live Hermes run")
-                    inspectorLine(label: "Source", value: task.source.displayTitle)
+                    inspectorLine(label: appState.text(zh: "任务 ID", en: "Task ID"), value: task.taskID)
+                    inspectorLine(label: appState.text(zh: "Agent", en: "Agent"), value: appState.displayName(forAgentID: task.agentID))
+                    inspectorLine(label: appState.text(zh: "数据流", en: "Feed"), value: appState.systemText(task.isPreview ? "Preview sample" : "Live Hermes run"))
+                    inspectorLine(label: appState.text(zh: "来源", en: "Source"), value: task.source.displayTitle)
                     if let currentSessionID = task.effectiveSessionID {
-                        inspectorLine(label: "Session", value: currentSessionID)
+                        inspectorLine(label: appState.text(zh: "会话", en: "Session"), value: currentSessionID)
                     }
                     if let rootSessionID = task.rootSessionID, rootSessionID != task.effectiveSessionID {
-                        inspectorLine(label: "Root session", value: rootSessionID)
+                        inspectorLine(label: appState.text(zh: "根会话", en: "Root session"), value: rootSessionID)
                     }
                     if let runID = task.runID {
-                        inspectorLine(label: "Run", value: runID)
+                        inspectorLine(label: appState.text(zh: "运行", en: "Run"), value: runID)
                     }
                 }
             } label: {
-                Label("Technical details", systemImage: "info.circle")
+                Label(appState.text(zh: "技术细节", en: "Technical details"), systemImage: "info.circle")
                     .font(.headline)
             }
             .padding(16)
@@ -1322,7 +1489,14 @@ struct DashboardView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.white.opacity(colorScheme == .dark ? 0.04 : 0.76))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.black.opacity(colorScheme == .dark ? 0.12 : 0.05), lineWidth: 1)
+        )
     }
 
     private func inspectorLine(label: String, value: String) -> some View {
@@ -1333,6 +1507,44 @@ struct DashboardView: View {
             Text(value)
                 .font(.subheadline)
         }
+    }
+
+    private func inspectorSummaryLine(id: String, label: String, value: String) -> some View {
+        let allowsCollapse = inspectorSummaryAllowsCollapse(value)
+        let isExpanded = expandedInspectorSummaryFieldIDs.contains(id)
+        let isHighlighted = highlightedInspectorSummaryFieldIDs.contains(id)
+
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.subheadline)
+                .lineLimit(allowsCollapse && isExpanded == false ? 4 : nil)
+                .textSelection(.enabled)
+
+            if allowsCollapse {
+                Button {
+                    toggleInspectorSummaryExpansion(for: id)
+                } label: {
+                    Text(isExpanded ? appState.text(zh: "收起", en: "Show less") : appState.text(zh: "展开", en: "Show more"))
+                        .font(.caption.weight(.medium))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.blue)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.blue.opacity(isHighlighted ? 0.14 : 0))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.blue.opacity(isHighlighted ? 0.22 : 0), lineWidth: 1)
+        )
+        .animation(.easeOut(duration: 1.4), value: isHighlighted)
     }
 
     private func inspectorBulletList(title: String, items: [String]) -> some View {
@@ -1353,7 +1565,7 @@ struct DashboardView: View {
         let button = Button {
             appState.performTaskAction(action, for: task.taskID)
         } label: {
-            Label(action.displayTitle, systemImage: action.symbolName)
+            Label(action.localizedDisplayTitle, systemImage: action.symbolName)
         }
         .disabled(isActionEnabled(action, for: task) == false)
 
@@ -1424,24 +1636,24 @@ struct DashboardView: View {
 
     private func workspaceQueueFocusTitle(for task: Task) -> String {
         if task.sessionStatus == .open {
-            return "Open conversation"
+            return appState.text(zh: "开放对话", en: "Open conversation")
         }
         if task.sessionStatus == .archived {
-            return "Archived"
+            return appState.text(zh: "已归档", en: "Archived")
         }
         switch task.state {
         case .waitingUser:
-            return "Action Required"
+            return appState.text(zh: "需要处理", en: "Action Required")
         case .failed:
-            return "Recovery Queue"
+            return appState.text(zh: "恢复队列", en: "Recovery Queue")
         case .running:
-            return "Running"
+            return appState.text(zh: "进行中", en: "Running")
         case .queued, .paused:
-            return "Queued & Paused"
+            return appState.text(zh: "排队 / 暂停", en: "Queued & Paused")
         case .succeeded:
-            return "Recent Result"
+            return appState.text(zh: "最近结果", en: "Recent Result")
         case .cancelled:
-            return "Stopped"
+            return appState.text(zh: "已停止", en: "Stopped")
         }
     }
 
@@ -1531,29 +1743,29 @@ struct DashboardView: View {
     }
 
     @ViewBuilder
-    private func workspaceBodyView(_ entry: WorkspaceFeedEntry) -> some View {
+    private func workspaceBodyView(_ entry: WorkspaceFeedEntry, task: Task) -> some View {
         WorkspaceMarkdownText(
-            entry.body,
+            workspaceEntryBody(entry, task: task),
             isStreaming: entry.isStreamingMarkdown,
             prefersMarkdown: entry.usesMarkdown
         )
             .textSelection(.enabled)
     }
 
-    private func workspaceFeedTailAnchor(_ entries: [WorkspaceFeedEntry]) -> WorkspaceFeedTailAnchor? {
+    private func workspaceFeedTailAnchor(_ entries: [WorkspaceFeedEntry], task: Task) -> WorkspaceFeedTailAnchor? {
         guard let lastEntry = entries.last else {
             return nil
         }
         return WorkspaceFeedTailAnchor(
             id: lastEntry.id,
-            body: lastEntry.body,
+            bodyCount: workspaceEntryBody(lastEntry, task: task).count,
             footer: lastEntry.footer,
             showsProgress: lastEntry.showsProgress
         )
     }
 
-    private func workspaceFeedAnimationKey(_ entries: [WorkspaceFeedEntry]) -> [String] {
-        entries.map(\.id)
+    private func workspaceFeedAnimationKey(taskID: Task.ID, entries: [WorkspaceFeedEntry]) -> WorkspaceFeedAnimationKey {
+        WorkspaceFeedAnimationKey(taskID: taskID, entryIDs: entries.map(\.id))
     }
 
     private func workspaceFeedEntryTransition(for entry: WorkspaceFeedEntry) -> AnyTransition {
@@ -1582,6 +1794,20 @@ struct DashboardView: View {
             withTransaction(transaction) {
                 scrollProxy.scrollTo(workspaceBottomAnchorID(for: taskID), anchor: .bottom)
             }
+        }
+    }
+
+    private func prepareWorkspaceFeedAnimation(for taskID: Task.ID) {
+        guard animatedWorkspaceTaskID != taskID else {
+            return
+        }
+
+        animatedWorkspaceTaskID = nil
+        DispatchQueue.main.async {
+            guard appState.selectedTaskID == taskID else {
+                return
+            }
+            animatedWorkspaceTaskID = taskID
         }
     }
 
@@ -1662,7 +1888,19 @@ struct DashboardView: View {
     private var selectedTaskSnapshotKey: SelectedTaskSnapshotKey {
         let selectedTask = appState.selectedTask
         return SelectedTaskSnapshotKey(
-            task: selectedTask,
+            taskID: selectedTask?.taskID,
+            updatedAt: selectedTask?.updatedAt,
+            state: selectedTask?.state,
+            sessionStatus: selectedTask?.sessionStatus,
+            runID: selectedTask?.runID,
+            currentSummary: selectedTask?.currentSummary,
+            outputCount: selectedTask?.output.count ?? 0,
+            taskEventCount: selectedTask?.taskEvents.count ?? 0,
+            availableActionCount: selectedTask?.availableActions.count ?? 0,
+            pendingAction: selectedTask?.pendingAction,
+            observationState: selectedTask?.runState.observationState,
+            observationMessage: selectedTask?.runState.observationMessage,
+            artifactSummary: selectedTask?.artifact?.summary,
             transcriptCount: selectedTask.map { appState.transcriptMessages(for: $0).count } ?? 0,
             pendingCount: selectedTask.map { appState.pendingOutgoingMessages(for: $0).count } ?? 0,
             transcriptDisplayMode: transcriptDisplayMode,
@@ -1674,13 +1912,96 @@ struct DashboardView: View {
 
     private func refreshSelectedTaskSnapshot() {
         guard let selectedTask = appState.selectedTask else {
-            selectedTaskSnapshot = nil
+            selectedTaskIDSnapshot = nil
+            selectedTaskDerivedSnapshot = nil
+            selectedTaskEntriesSignature = nil
             selectedTaskEntriesSnapshot = []
+            lastInspectorSummaryValues = [:]
+            highlightedInspectorSummaryFieldIDs = []
+            inspectorSummaryHighlightTokens = [:]
             return
         }
 
-        selectedTaskSnapshot = selectedTask
-        selectedTaskEntriesSnapshot = workspaceFeedEntries(for: selectedTask)
+        let derivedSnapshot = buildSelectedTaskDerivedSnapshot(for: selectedTask)
+        let currentSummaryValues = derivedSnapshot.inspectorSummaryValues
+        if selectedTaskIDSnapshot != selectedTask.taskID {
+            lastInspectorSummaryValues = currentSummaryValues
+            highlightedInspectorSummaryFieldIDs = []
+            inspectorSummaryHighlightTokens = [:]
+        } else {
+            for (fieldID, value) in currentSummaryValues where lastInspectorSummaryValues[fieldID] != value {
+                triggerInspectorSummaryHighlight(for: fieldID)
+            }
+            lastInspectorSummaryValues = currentSummaryValues
+        }
+
+        selectedTaskIDSnapshot = selectedTask.taskID
+        selectedTaskDerivedSnapshot = derivedSnapshot
+        let entriesSignature = makeSelectedTaskEntriesSignature(for: selectedTask)
+        if selectedTaskEntriesSignature != entriesSignature {
+            selectedTaskEntriesSnapshot = workspaceFeedEntries(for: selectedTask)
+            selectedTaskEntriesSignature = entriesSignature
+        }
+    }
+
+    private func cachedDerivedSnapshot(for task: Task) -> SelectedTaskDerivedSnapshot? {
+        guard selectedTaskDerivedSnapshot?.taskID == task.taskID else {
+            return nil
+        }
+        return selectedTaskDerivedSnapshot
+    }
+
+    private func buildSelectedTaskDerivedSnapshot(for task: Task) -> SelectedTaskDerivedSnapshot {
+        let transcriptMessages = appState.transcriptMessages(for: task)
+        let streamingText = workspaceStreamingText(for: task, transcriptMessages: transcriptMessages)
+        let streamingPreview = makeStreamingPreview(for: task, streamingText: streamingText)
+        let resultSummary = makeWorkspaceResultSummary(
+            for: task,
+            transcriptMessages: transcriptMessages,
+            streamingText: streamingText
+        )
+        let currentFocusSummary = makeWorkspaceCurrentFocusSummary(
+            for: task,
+            streamingText: streamingText,
+            resultSummary: resultSummary
+        )
+        let overviewStatusLine = makeWorkspaceOverviewStatusLine(for: task, resultSummary: resultSummary)
+        let shouldShowInspectorLatestAnswer = makeShouldShowInspectorLatestAnswer(
+            for: task,
+            transcriptMessages: transcriptMessages,
+            streamingPreview: streamingPreview,
+            resultSummary: resultSummary
+        )
+
+        return SelectedTaskDerivedSnapshot(
+            taskID: task.taskID,
+            currentFocusSummary: currentFocusSummary,
+            overviewStatusLine: overviewStatusLine,
+            streamingPreview: streamingPreview,
+            resultSummary: resultSummary,
+            shouldShowInspectorLatestAnswer: shouldShowInspectorLatestAnswer,
+            inspectorSummaryValues: makeInspectorSummaryFieldValues(
+                for: task,
+                currentFocusSummary: currentFocusSummary,
+                overviewStatusLine: overviewStatusLine,
+                streamingPreview: streamingPreview,
+                resultSummary: resultSummary,
+                shouldShowResultSummary: shouldShowInspectorLatestAnswer
+            )
+        )
+    }
+
+    private func makeSelectedTaskEntriesSignature(for task: Task) -> SelectedTaskEntriesSignature {
+        SelectedTaskEntriesSignature(
+            taskID: task.taskID,
+            transcriptCount: appState.transcriptMessages(for: task).count,
+            pendingCount: appState.pendingOutgoingMessages(for: task).count,
+            transcriptDisplayMode: transcriptDisplayMode,
+            sessionStatus: task.sessionStatus,
+            state: task.state,
+            hasStreamingDraft: task.sessionStatus == .running && task.output.isEmpty == false,
+            artifactSummary: task.artifact?.summary
+        )
     }
 
     private func prepareComposerForNewTask() {
@@ -1732,21 +2053,26 @@ struct DashboardView: View {
         let buildStart = DispatchTime.now().uptimeNanoseconds
         let transcriptMessages = appState.transcriptMessages(for: task)
         let pendingEntries = pendingOutgoingEntries(for: task)
+        let streamingEntry = workspaceStreamingEntry(for: task, transcriptMessages: transcriptMessages)
         if transcriptMessages.isEmpty, task.isPreview {
             return legacyWorkspaceFeedEntries(for: task)
         }
         if transcriptMessages.isEmpty {
             var entries = pendingEntries.isEmpty ? legacyWorkspaceFeedEntries(for: task) : pendingEntries
-
-            if let streamingEntry = workspaceStreamingEntry(for: task, transcriptMessages: []) {
+            if let streamingEntry {
                 entries.append(streamingEntry)
+                entries = entries.sorted(by: workspaceFeedEntrySort)
             }
             return entries
         }
 
-        let conversationMessages = transcriptMessages.filter(task.shouldDisplayMessageInWorkspaceConversation)
+        let conversationMessages = transcriptMessages.filter { message in
+            shouldDisplayMessageInPrimaryWorkspace(message, task: task)
+                && task.shouldDisplayMessageInWorkspaceConversation(message)
+        }
         let visibleMessages = transcriptMessages.filter { message in
-            task.shouldDisplayMessageInWorkspace(message, mode: transcriptDisplayMode)
+            shouldDisplayMessageInPrimaryWorkspace(message, task: task)
+                && task.shouldDisplayMessageInWorkspace(message, mode: transcriptDisplayMode)
         }
         let latestConversationAssistantID = conversationMessages
             .reversed()
@@ -1757,15 +2083,10 @@ struct DashboardView: View {
             workspaceFeedEntry(for: message, task: task, latestConversationAssistantID: latestConversationAssistantID)
         }
         entries.append(contentsOf: pendingEntries)
-        entries = entries.sorted(by: workspaceFeedEntrySort)
-        // Show the streaming fallback entry for ALL running tasks (not just preview) when there is
-        // no visible assistant message yet. This surfaces "Hermes is working…" while waiting for
-        // the first token, and the streaming draft text once tokens arrive.
-        let hasVisibleAssistantMessage = visibleMessages.contains { $0.role == .assistant }
-        if !hasVisibleAssistantMessage,
-           let streamingEntry = workspaceStreamingEntry(for: task, transcriptMessages: visibleMessages) {
+        if let streamingEntry {
             entries.append(streamingEntry)
         }
+        entries = entries.sorted(by: workspaceFeedEntrySort)
         if task.isPreview,
            let artifact = task.artifact,
            artifact.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
@@ -1793,12 +2114,23 @@ struct DashboardView: View {
         return entries
     }
 
+    private func shouldDisplayMessageInPrimaryWorkspace(_ message: HermesConversationMessage, task: Task) -> Bool {
+        return true
+    }
+
+    private func workspaceEntryBody(_ entry: WorkspaceFeedEntry, task: Task) -> String {
+        guard let liveBodyTaskID = entry.liveBodyTaskID, liveBodyTaskID == task.taskID else {
+            return entry.body
+        }
+        return task.output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private func legacyWorkspaceFeedEntries(for task: Task) -> [WorkspaceFeedEntry] {
         let requestBody = task.requestText ?? task.title
         var entries: [WorkspaceFeedEntry] = [
             WorkspaceFeedEntry(
                 id: "task-request-\(task.taskID)",
-                title: "You asked Hermes",
+                title: appState.text(zh: "你交给 Hermes 的任务", en: "You asked Hermes"),
                 body: requestBody,
                 footer: task.createdAt.formatted(date: .abbreviated, time: .shortened),
                 alignment: .trailing,
@@ -1808,13 +2140,13 @@ struct DashboardView: View {
             )
         ]
 
-        if let runtimeEntry = workspaceStreamingEntry(for: task, transcriptMessages: []) {
-            entries.append(runtimeEntry)
-        } else if let resultSummary = workspaceResultSummary(for: task), resultSummary != requestBody {
+        if let resultSummary = workspaceResultSummary(for: task), resultSummary != requestBody {
             entries.append(
                 WorkspaceFeedEntry(
                     id: "task-summary-\(task.taskID)",
-                    title: task.state == .succeeded ? "Hermes result" : "Hermes update",
+                    title: task.state == .succeeded
+                        ? appState.text(zh: "Hermes 结果", en: "Hermes result")
+                        : appState.text(zh: "Hermes 更新", en: "Hermes update"),
                     body: resultSummary,
                     footer: task.state.localizedDisplayTitle,
                     alignment: .leading,
@@ -1829,9 +2161,9 @@ struct DashboardView: View {
             entries.append(
                 WorkspaceFeedEntry(
                     id: "artifact-\(task.taskID)",
-                    title: "Result snapshot",
-                    body: artifact.summary,
-                    footer: artifact.keyOutputs.prefix(2).joined(separator: " • "),
+                    title: appState.text(zh: "结果快照", en: "Result snapshot"),
+                    body: appState.systemText(artifact.summary),
+                    footer: artifact.keyOutputs.prefix(2).map(appState.systemText).joined(separator: " • "),
                     alignment: .leading,
                     background: Color.green.opacity(0.10),
                     tint: .green,
@@ -1872,12 +2204,12 @@ struct DashboardView: View {
             tint = isLatestStableAnswer ? .green : .secondary
             bubbleStyle = isLatestStableAnswer ? .success : .automatic
         case .tool:
-            title = message.toolName.map { "Tool · \($0)" } ?? "Tool output"
+            title = message.toolName.map { "\(appState.text(zh: "工具", en: "Tool")) · \($0)" } ?? appState.text(zh: "工具输出", en: "Tool output")
             background = Color.secondary.opacity(0.08)
             tint = .secondary
             bubbleStyle = .tool
         case .system:
-            title = "System"
+            title = appState.text(zh: "系统", en: "System")
             background = Color.orange.opacity(0.08)
             tint = .orange
             bubbleStyle = .system
@@ -2017,25 +2349,24 @@ struct DashboardView: View {
     }
 
     private func workspaceStreamingEntry(for task: Task, transcriptMessages: [HermesConversationMessage]) -> WorkspaceFeedEntry? {
-        guard task.sessionStatus == .running else {
+        guard task.sessionStatus == .running, task.output.isEmpty == false else {
             return nil
         }
 
-        if let streamingText = workspaceStreamingText(for: task, transcriptMessages: transcriptMessages) {
-            return WorkspaceFeedEntry(
-                id: "streaming-\(task.taskID)",
-                title: "Hermes · draft",
-                body: streamingText,
-                footer: "Streaming live now · not final yet",
-                alignment: .leading,
-                background: Color.blue.opacity(0.08),
-                tint: .blue,
-                monospaced: false,
-                showsProgress: true,
-                bubbleStyle: .progress
-            )
-        }
-        return nil
+        return WorkspaceFeedEntry(
+            id: "streaming-\(task.taskID)",
+            title: appState.text(zh: "Hermes · 草稿", en: "Hermes · draft"),
+            body: "",
+            footer: appState.text(zh: "正在实时输出 · 还不是最终结果", en: "Streaming live now · not final yet"),
+            alignment: .leading,
+            background: Color.blue.opacity(0.08),
+            tint: .blue,
+            monospaced: false,
+            showsProgress: true,
+            bubbleStyle: .progress,
+            liveBodyTaskID: task.taskID,
+            isStreamingMarkdown: true
+        )
     }
 
     private func workspaceProgressActivityEntry(for task: Task, progressMessages: [HermesConversationMessage]) -> WorkspaceFeedEntry? {
@@ -2048,13 +2379,13 @@ struct DashboardView: View {
         let recentTools = Array(progressMessages.compactMap(\.toolName).suffix(3))
         let footerParts = [
             recentTools.isEmpty ? nil : recentTools.joined(separator: " • "),
-            "Open the Progress tab for the full execution trail"
+            appState.text(zh: "打开“任务进展”标签查看完整执行轨迹", en: "Open the Progress tab for the full execution trail")
         ].compactMap { $0 }
 
         return WorkspaceFeedEntry(
             id: "progress-activity-\(task.taskID)-\(totalUpdates)",
-            title: "Task progress",
-            body: "Captured \(totalUpdates) low-level update\(totalUpdates == 1 ? "" : "s") from tools, terminals, and streaming execution details. Those logs stay in Task progress instead of the main conversation.",
+            title: appState.text(zh: "任务进展", en: "Task progress"),
+            body: appState.text(zh: "已捕获 \(totalUpdates) 条来自工具、终端和流式执行细节的底层更新。这些日志会保留在“任务进展”里，而不会混进主对话。", en: "Captured \(totalUpdates) low-level update\(totalUpdates == 1 ? "" : "s") from tools, terminals, and streaming execution details. Those logs stay in Task progress instead of the main conversation."),
             footer: footerParts.joined(separator: " · "),
             alignment: .leading,
             background: Color.secondary.opacity(0.08),
@@ -2065,6 +2396,10 @@ struct DashboardView: View {
     }
 
     private func workspaceStreamingText(for task: Task, transcriptMessages: [HermesConversationMessage]) -> String? {
+        if task.sessionStatus == .running {
+            return task.output.isEmpty ? nil : task.output
+        }
+
         let streamingText = task.output.trimmingCharacters(in: .whitespacesAndNewlines)
         guard streamingText.isEmpty == false else {
             return nil
@@ -2091,20 +2426,62 @@ struct DashboardView: View {
     }
 
     private func workspaceStreamingPreview(for task: Task) -> String? {
+        if let cached = cachedDerivedSnapshot(for: task) {
+            return cached.streamingPreview
+        }
         guard let streamingText = workspaceStreamingText(for: task, transcriptMessages: appState.transcriptMessages(for: task)) else {
             return nil
         }
-        return streamingText.workspaceSnippet(maxLength: 220)
+        return makeStreamingPreview(for: task, streamingText: streamingText)
     }
 
     private func workspaceResultSummary(for task: Task) -> String? {
+        if let cached = cachedDerivedSnapshot(for: task) {
+            return cached.resultSummary
+        }
+
+        let transcriptMessages = appState.transcriptMessages(for: task)
+        return makeWorkspaceResultSummary(
+            for: task,
+            transcriptMessages: transcriptMessages,
+            streamingText: workspaceStreamingText(for: task, transcriptMessages: transcriptMessages)
+        )
+    }
+
+    private func workspaceCurrentFocusSummary(for task: Task) -> String {
+        if let cached = cachedDerivedSnapshot(for: task) {
+            return cached.currentFocusSummary
+        }
+
+        let transcriptMessages = appState.transcriptMessages(for: task)
+        let streamingText = workspaceStreamingText(for: task, transcriptMessages: transcriptMessages)
+        let resultSummary = makeWorkspaceResultSummary(
+            for: task,
+            transcriptMessages: transcriptMessages,
+            streamingText: streamingText
+        )
+        return makeWorkspaceCurrentFocusSummary(
+            for: task,
+            streamingText: streamingText,
+            resultSummary: resultSummary
+        )
+    }
+
+    private func makeWorkspaceResultSummary(
+        for task: Task,
+        transcriptMessages: [HermesConversationMessage],
+        streamingText: String?
+    ) -> String? {
+        if task.sessionStatus == .running {
+            return task.runState.progressHint ?? task.latestOutputSummary ?? streamingText
+        }
+
         if task.isPreview,
            let artifactSummary = task.artifact?.summary.trimmingCharacters(in: .whitespacesAndNewlines),
            artifactSummary.isEmpty == false {
             return artifactSummary
         }
 
-        let transcriptMessages = appState.transcriptMessages(for: task)
         if let lastAssistantMessage = transcriptMessages
             .reversed()
             .first(where: { $0.role == .assistant && task.shouldDisplayMessageInWorkspaceConversation($0) })?
@@ -2113,32 +2490,114 @@ struct DashboardView: View {
             return lastAssistantMessage
         }
 
-        return workspaceStreamingText(for: task, transcriptMessages: transcriptMessages)
+        return streamingText
     }
 
-    private func workspaceCurrentFocusSummary(for task: Task) -> String {
+    private func makeWorkspaceCurrentFocusSummary(
+        for task: Task,
+        streamingText: String?,
+        resultSummary: String?
+    ) -> String {
         if task.state == .waitingUser {
-            return (task.runState.waitingReason ?? "Waiting for your decision before Hermes can continue.").workspaceSnippet(maxLength: 180)
+            return appState.systemText(task.runState.waitingReason ?? "Waiting for your decision before Hermes can continue.").workspaceSnippet(maxLength: 180)
         }
         if task.state == .failed {
-            return (task.runState.failureMessage ?? "Hermes hit an issue and needs recovery.").workspaceSnippet(maxLength: 180)
+            return appState.systemText(task.runState.failureMessage ?? "Hermes hit an issue and needs recovery.").workspaceSnippet(maxLength: 180)
         }
         if task.sessionStatus == .running {
-            if let streamingText = workspaceStreamingText(for: task, transcriptMessages: appState.transcriptMessages(for: task)) {
-                return streamingText.workspaceSnippet(maxLength: 180)
+            if task.runState.observationState != .live,
+               let observationStatusLine = task.runState.observationStatusLine,
+               observationStatusLine.isEmpty == false {
+                return appState.systemText(observationStatusLine).workspaceSnippet(maxLength: 180)
             }
-            return "Hermes is working through the task. Detailed tool, terminal, and agent activity stays in Task progress."
+            return appState.systemText(task.runState.phaseLabel).workspaceSnippet(maxLength: 180)
         }
         if task.sessionStatus == .open {
-            if let resultSummary = workspaceResultSummary(for: task) {
-                return resultSummary.workspaceSnippet(maxLength: 180)
-            }
-            return "This conversation is still open. Continue chatting with Hermes in the current task."
+            return appState.text(zh: "当前对话已开放，可直接在下方对话区继续追问或补充上下文。", en: "This conversation is open. Continue in the transcript below with follow-up context.")
+                .workspaceSnippet(maxLength: 180)
         }
-        if let resultSummary = workspaceResultSummary(for: task) {
-            return resultSummary.workspaceSnippet(maxLength: 180)
+        if task.sessionStatus == .archived {
+            return appState.text(zh: "这次运行已结束，可查看下方回复、文件和执行记录。", en: "This run has ended. Review the reply, files, and execution trail below.")
+                .workspaceSnippet(maxLength: 180)
         }
-        return (task.requestText ?? task.currentSummary).workspaceSnippet(maxLength: 180)
+        return (task.requestText ?? appState.systemText(task.currentSummary)).workspaceSnippet(maxLength: 180)
+    }
+
+    private func makeWorkspaceOverviewStatusLine(for task: Task, resultSummary _: String?) -> String? {
+        if let waitingReason = task.runState.waitingReason, waitingReason.isEmpty == false {
+            return appState.systemText(waitingReason)
+        }
+        if let failureMessage = task.runState.failureMessage, failureMessage.isEmpty == false {
+            return appState.systemText(failureMessage)
+        }
+        if let progressHint = task.runState.progressHint, progressHint.isEmpty == false {
+            return appState.systemText(progressHint)
+        }
+        if let observationStatusLine = task.runState.observationStatusLine, observationStatusLine.isEmpty == false {
+            return appState.systemText(observationStatusLine)
+        }
+        return nil
+    }
+
+    private func makeShouldShowInspectorLatestAnswer(
+        for task: Task,
+        transcriptMessages: [HermesConversationMessage],
+        streamingPreview _: String?,
+        resultSummary: String?
+    ) -> Bool {
+        guard let resultSummary, resultSummary.isEmpty == false else {
+            return false
+        }
+
+        if task.sessionStatus == .running {
+            return false
+        }
+
+        // When the workspace is using the legacy fallback feed, the center column already shows
+        // the latest answer as a bubble-like result snapshot. Do not repeat it again in the
+        // inspector.
+        if transcriptMessages.isEmpty {
+            return false
+        }
+
+        let hasVisibleAssistantMessage = transcriptMessages.contains { message in
+            message.role == .assistant && task.shouldDisplayMessageInWorkspaceConversation(message)
+        }
+        return hasVisibleAssistantMessage == false
+    }
+
+    private func streamingSummarySource(for task: Task, streamingText: String?) -> String? {
+        guard task.sessionStatus == .running else {
+            return streamingText
+        }
+        return task.runState.progressHint ?? task.latestOutputSummary ?? streamingText
+    }
+
+    private func makeStreamingPreview(for task: Task, streamingText: String?) -> String? {
+        guard let source = streamingSummarySource(for: task, streamingText: streamingText) else {
+            return nil
+        }
+        return source.workspaceSnippet(maxLength: 220)
+    }
+
+    private func makeInspectorSummaryFieldValues(
+        for task: Task,
+        currentFocusSummary: String,
+        overviewStatusLine: String?,
+        streamingPreview: String?,
+        resultSummary: String?,
+        shouldShowResultSummary: Bool
+    ) -> [String: String] {
+        Dictionary(
+            uniqueKeysWithValues: buildInspectorSummaryFields(
+                for: task,
+                currentFocusSummary: currentFocusSummary,
+                overviewStatusLine: overviewStatusLine,
+                streamingPreview: streamingPreview,
+                resultSummary: resultSummary,
+                shouldShowResultSummary: shouldShowResultSummary
+            ).map { ($0.id, $0.value) }
+        )
     }
 
     private func workspaceDisplayTitle(for task: Task) -> String {
@@ -2148,7 +2607,7 @@ struct DashboardView: View {
         if Task.isGenericWorkspaceTitle(task.title), let requestText = task.requestText, requestText.isEmpty == false {
             return Task.summarizedWorkspaceTitle(from: requestText)
         }
-        return task.title
+        return appState.systemText(task.title)
     }
 
     private func workspaceListIntroduction(for task: Task) -> String {
@@ -2169,7 +2628,7 @@ struct DashboardView: View {
 
     private func workspaceListStatusLine(for task: Task) -> String? {
         if let statusContextLine = task.statusContextLine, statusContextLine.isEmpty == false {
-            return statusContextLine
+            return appState.systemText(statusContextLine)
         }
 
         let intro = workspaceListIntroduction(for: task)
@@ -2207,21 +2666,21 @@ struct DashboardView: View {
 
         return [
             WorkspaceProgressSection(
-                title: "Run status",
+                title: appState.text(zh: "运行状态", en: "Run status"),
                 systemImage: "bolt.horizontal.circle",
                 tint: .orange,
                 events: runStatusEvents,
                 emphasizeDetail: false
             ),
             WorkspaceProgressSection(
-                title: "Tools & execution",
+                title: appState.text(zh: "工具与执行", en: "Tools & execution"),
                 systemImage: "hammer",
                 tint: .secondary,
                 events: executionEvents,
                 emphasizeDetail: false
             ),
             WorkspaceProgressSection(
-                title: "Agent stream",
+                title: appState.text(zh: "Agent 流", en: "Agent stream"),
                 systemImage: "text.alignleft",
                 tint: .blue,
                 events: agentStreamEvents,
@@ -2294,7 +2753,7 @@ struct DashboardView: View {
                     Button {
                         toggleInspectorEventExpansion(for: event.id)
                     } label: {
-                        Text(isExpanded ? "Show less" : "Show more")
+                        Text(isExpanded ? appState.text(zh: "收起", en: "Show less") : appState.text(zh: "展开", en: "Show more"))
                             .font(.caption.weight(.medium))
                     }
                     .buttonStyle(.plain)
@@ -2321,30 +2780,238 @@ struct DashboardView: View {
         }
     }
 
+    private func inspectorSummaryAllowsCollapse(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            return false
+        }
+
+        return trimmed.count > 220 || trimmed.contains("\n")
+    }
+
+    private func toggleInspectorSummaryExpansion(for summaryID: String) {
+        if expandedInspectorSummaryFieldIDs.contains(summaryID) {
+            expandedInspectorSummaryFieldIDs.remove(summaryID)
+        } else {
+            expandedInspectorSummaryFieldIDs.insert(summaryID)
+        }
+    }
+
+    private func inspectorSummaryFieldValues(for task: Task) -> [String: String] {
+        if let cached = cachedDerivedSnapshot(for: task) {
+            return cached.inspectorSummaryValues
+        }
+
+        let transcriptMessages = appState.transcriptMessages(for: task)
+        let streamingText = workspaceStreamingText(for: task, transcriptMessages: transcriptMessages)
+        let streamingPreview = streamingText.map { $0.workspaceSnippet(maxLength: 220) }
+        let resultSummary = makeWorkspaceResultSummary(
+            for: task,
+            transcriptMessages: transcriptMessages,
+            streamingText: streamingText
+        )
+        let currentFocusSummary = makeWorkspaceCurrentFocusSummary(
+            for: task,
+            streamingText: streamingText,
+            resultSummary: resultSummary
+        )
+
+        return makeInspectorSummaryFieldValues(
+            for: task,
+            currentFocusSummary: currentFocusSummary,
+            overviewStatusLine: makeWorkspaceOverviewStatusLine(for: task, resultSummary: resultSummary),
+            streamingPreview: streamingPreview,
+            resultSummary: resultSummary,
+            shouldShowResultSummary: makeShouldShowInspectorLatestAnswer(
+                for: task,
+                transcriptMessages: transcriptMessages,
+                streamingPreview: streamingPreview,
+                resultSummary: resultSummary
+            )
+        )
+    }
+
+    private func inspectorSummaryFields(for task: Task) -> [InspectorSummaryField] {
+        if let cached = cachedDerivedSnapshot(for: task) {
+            return buildInspectorSummaryFields(
+                for: task,
+                currentFocusSummary: cached.currentFocusSummary,
+                overviewStatusLine: cached.overviewStatusLine,
+                streamingPreview: cached.streamingPreview,
+                resultSummary: cached.resultSummary,
+                shouldShowResultSummary: cached.shouldShowInspectorLatestAnswer
+            )
+        }
+
+        let transcriptMessages = appState.transcriptMessages(for: task)
+        let streamingText = workspaceStreamingText(for: task, transcriptMessages: transcriptMessages)
+        let streamingPreview = makeStreamingPreview(for: task, streamingText: streamingText)
+        let resultSummary = makeWorkspaceResultSummary(
+            for: task,
+            transcriptMessages: transcriptMessages,
+            streamingText: streamingText
+        )
+        let currentFocusSummary = makeWorkspaceCurrentFocusSummary(
+            for: task,
+            streamingText: streamingText,
+            resultSummary: resultSummary
+        )
+
+        return buildInspectorSummaryFields(
+            for: task,
+            currentFocusSummary: currentFocusSummary,
+            overviewStatusLine: makeWorkspaceOverviewStatusLine(for: task, resultSummary: resultSummary),
+            streamingPreview: streamingPreview,
+            resultSummary: resultSummary,
+            shouldShowResultSummary: makeShouldShowInspectorLatestAnswer(
+                for: task,
+                transcriptMessages: transcriptMessages,
+                streamingPreview: streamingPreview,
+                resultSummary: resultSummary
+            )
+        )
+    }
+
+    private func buildInspectorSummaryFields(
+        for task: Task,
+        currentFocusSummary: String,
+        overviewStatusLine: String?,
+        streamingPreview: String?,
+        resultSummary: String?,
+        shouldShowResultSummary: Bool
+    ) -> [InspectorSummaryField] {
+        var fields: [InspectorSummaryField] = []
+        var seenValues: Set<String> = []
+
+        func appendField(id: String, label: String, value: String, allowDuplicate: Bool = false) {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.isEmpty == false else {
+                return
+            }
+
+            let normalizedValue = normalizedInspectorSummaryValue(trimmed)
+            if allowDuplicate == false, seenValues.contains(normalizedValue) {
+                return
+            }
+
+            fields.append(InspectorSummaryField(id: id, label: label, value: trimmed))
+            seenValues.insert(normalizedValue)
+        }
+
+        appendField(
+            id: "task-summary-goal-\(task.taskID)",
+            label: appState.text(zh: "目标", en: "Goal"),
+            value: task.requestText ?? appState.systemText(task.title),
+            allowDuplicate: true
+        )
+        appendField(
+            id: "task-summary-current-\(task.taskID)",
+            label: appState.text(zh: "当前", en: "Current"),
+            value: currentFocusSummary
+        )
+        appendField(
+            id: "task-summary-phase-\(task.taskID)",
+            label: appState.text(zh: "当前阶段", en: "Current phase"),
+            value: inspectorPhaseValue(for: task)
+        )
+        appendField(
+            id: "task-summary-focus-\(task.taskID)",
+            label: appState.text(zh: "当前重点", en: "Queue focus"),
+            value: workspaceQueueFocusTitle(for: task)
+        )
+
+        if let overviewStatusLine {
+            appendField(
+                id: "task-summary-status-\(task.taskID)",
+                label: appState.text(zh: "状态", en: "Status"),
+                value: overviewStatusLine
+            )
+        }
+
+        if let sessionBindingSummary = task.sessionBindingSummary {
+            appendField(
+                id: "task-summary-session-\(task.taskID)",
+                label: appState.text(zh: "会话", en: "Session"),
+                value: appState.systemText(sessionBindingSummary)
+            )
+        }
+
+        if let streamingPreview {
+            appendField(
+                id: "task-summary-streaming-\(task.taskID)",
+                label: appState.text(zh: "流式输出", en: "Streaming"),
+                value: streamingPreview
+            )
+        } else if let observationStatusLine = task.runState.observationStatusLine {
+            appendField(
+                id: "task-summary-feed-\(task.taskID)",
+                label: appState.text(zh: "实时流", en: "Live feed"),
+                value: appState.systemText(observationStatusLine)
+            )
+        } else if shouldShowResultSummary, let resultSummary {
+            appendField(
+                id: "task-summary-result-\(task.taskID)",
+                label: task.state == .succeeded
+                    ? appState.text(zh: "结果", en: "Result")
+                    : appState.text(zh: "最新有效回复", en: "Latest useful answer"),
+                value: resultSummary
+            )
+        }
+
+        return fields
+    }
+
+    private func normalizedInspectorSummaryValue(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .lowercased()
+    }
+
+    private func triggerInspectorSummaryHighlight(for summaryID: String) {
+        let token = UUID()
+        inspectorSummaryHighlightTokens[summaryID] = token
+
+        _ = withAnimation(.easeOut(duration: 0.12)) {
+            highlightedInspectorSummaryFieldIDs.insert(summaryID)
+        }
+
+        Swift.Task { @MainActor in
+            try? await Swift.Task.sleep(for: .seconds(1.6))
+            guard inspectorSummaryHighlightTokens[summaryID] == token else {
+                return
+            }
+            inspectorSummaryHighlightTokens.removeValue(forKey: summaryID)
+            _ = withAnimation(.easeOut(duration: 1.4)) {
+                highlightedInspectorSummaryFieldIDs.remove(summaryID)
+            }
+        }
+    }
+
     private func workspaceEventTitle(for event: TaskEvent) -> String {
         switch event.type {
         case .confirm:
-            return "Approval"
+            return appState.text(zh: "确认", en: "Approval")
         case .error:
             if let toolName = workspaceToolName(for: event) {
-                return "\(workspaceToolCategoryTitle(for: toolName)) error"
+                return appState.text(zh: "\(workspaceToolCategoryTitle(for: toolName))错误", en: "\(workspaceToolCategoryTitle(for: toolName)) error")
             }
-            return "Issue"
+            return appState.text(zh: "问题", en: "Issue")
         case .result:
-            return "Result"
+            return appState.text(zh: "结果", en: "Result")
         case .output:
-            return "Output"
+            return appState.text(zh: "输出", en: "Output")
         case .step:
             if let toolName = workspaceToolName(for: event) {
                 return workspaceToolCategoryTitle(for: toolName)
             }
-            return "Execution"
+            return appState.text(zh: "执行", en: "Execution")
         case .stateChange:
-            return "Run status"
+            return appState.text(zh: "运行状态", en: "Run status")
         case .log:
-            return "Reasoning"
+            return appState.text(zh: "思考", en: "Reasoning")
         case .clarify:
-            return "Clarification"
+            return appState.text(zh: "澄清", en: "Clarification")
         }
     }
 
@@ -2358,16 +3025,16 @@ struct DashboardView: View {
         switch event.type {
         case .step:
             if event.summary.hasPrefix("Started tool:") {
-                return "Started \(displayName)"
+                return appState.systemText("Started \(displayName)")
             }
             if event.summary.hasPrefix("Completed tool:") {
-                return "Completed \(displayName)"
+                return appState.systemText("Completed \(displayName)")
             }
             return displayName
         case .error:
-            return "\(displayName) failed"
+            return appState.text(zh: "\(displayName)失败", en: "\(displayName) failed")
         case .confirm, .result, .output, .stateChange, .log, .clarify:
-            return event.summary
+            return appState.systemText(event.summary)
         }
     }
 
@@ -2390,24 +3057,24 @@ struct DashboardView: View {
         let normalized = toolName.lowercased()
 
         if normalized == "terminal" {
-            return "Terminal"
+            return appState.text(zh: "终端", en: "Terminal")
         }
         if normalized == "skill_view" || normalized.hasPrefix("skill_") {
-            return "Skill"
+            return appState.text(zh: "技能", en: "Skill")
         }
         if normalized.hasPrefix("browser_") {
-            return "Browser"
+            return appState.text(zh: "浏览器", en: "Browser")
         }
         if ["read_file", "write_file", "patch", "search_files"].contains(normalized) {
-            return "Files"
+            return appState.text(zh: "文件", en: "Files")
         }
         if normalized == "delegate_task" {
-            return "Delegation"
+            return appState.text(zh: "委派", en: "Delegation")
         }
         if normalized == "clarify" {
-            return "Clarification"
+            return appState.text(zh: "澄清", en: "Clarification")
         }
-        return "Tool"
+        return appState.text(zh: "工具", en: "Tool")
     }
 
     private func workspaceDisplayToolName(_ toolName: String) -> String {
@@ -2415,17 +3082,17 @@ struct DashboardView: View {
 
         switch normalized {
         case "terminal":
-            return "Terminal"
+            return appState.text(zh: "终端", en: "Terminal")
         case "skill_view":
-            return "Skill view"
+            return appState.text(zh: "技能视图", en: "Skill view")
         case "delegate_task":
-            return "Delegate task"
+            return appState.text(zh: "委派任务", en: "Delegate task")
         case "read_file":
-            return "Read file"
+            return appState.text(zh: "读取文件", en: "Read file")
         case "write_file":
-            return "Write file"
+            return appState.text(zh: "写入文件", en: "Write file")
         case "search_files":
-            return "Search files"
+            return appState.text(zh: "搜索文件", en: "Search files")
         default:
             let words = toolName
                 .split(separator: "_")
@@ -2548,45 +3215,6 @@ struct DashboardView: View {
         return min(proposedWidth, min(maxUsableWidth, 760))
     }
 
-    private func workspaceBubbleWidth(
-        for entry: WorkspaceFeedEntry,
-        bubbleMaxWidth: CGFloat,
-        minimumWidth: CGFloat
-    ) -> CGFloat {
-        let horizontalPadding: CGFloat = 32
-        let contentMaxWidth = max(bubbleMaxWidth - horizontalPadding, 120)
-        let titleWidth = entry.title.isEmpty ? 0 : workspaceMeasuredLineWidth(
-            entry.title,
-            font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
-        )
-        let bodyWidth = workspaceMeasuredLineWidth(
-            entry.body,
-            font: entry.monospaced
-                ? NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-                : NSFont.systemFont(ofSize: NSFont.systemFontSize)
-        )
-        let footerWidth = entry.footer.map {
-            workspaceMeasuredLineWidth($0, font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize))
-        } ?? 0
-
-        let targetContentWidth = min(
-            max(titleWidth, bodyWidth, footerWidth),
-            contentMaxWidth
-        )
-
-        return max(targetContentWidth + horizontalPadding, minimumWidth)
-    }
-
-    private func workspaceMeasuredLineWidth(_ text: String, font: NSFont) -> CGFloat {
-        let attributes: [NSAttributedString.Key: Any] = [.font: font]
-        let lines = text
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-        let widths = lines.map { line in
-            ceil((line as NSString).size(withAttributes: attributes).width)
-        }
-        return widths.max() ?? 0
-    }
 }
 
 private enum WorkspaceListScope: String, CaseIterable, Identifiable {
@@ -2598,27 +3226,27 @@ private enum WorkspaceListScope: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .active:
-            return "In Progress"
+            return HermesDeskL10n.text(zh: "进行中", en: "In Progress")
         case .archive:
-            return "Archive"
+            return HermesDeskL10n.text(zh: "归档", en: "Archive")
         }
     }
 
     var emptyTitle: String {
         switch self {
         case .active:
-            return "No active task"
+            return HermesDeskL10n.text(zh: "暂无进行中的任务", en: "No active task")
         case .archive:
-            return "No archived task"
+            return HermesDeskL10n.text(zh: "暂无归档任务", en: "No archived task")
         }
     }
 
     var emptyMessage: String {
         switch self {
         case .active:
-            return "Pick an agent above and create a new task to start working in this workspace."
+            return HermesDeskL10n.text(zh: "先在上方选择一个 Agent，再新建任务，就可以在这个工作区里开始工作。", en: "Pick an agent above and create a new task to start working in this workspace.")
         case .archive:
-            return "Completed and stopped tasks will land here once they are ready to revisit."
+            return HermesDeskL10n.text(zh: "已完成和已停止的任务在适合回看时会出现在这里。", en: "Completed and stopped tasks will land here once they are ready to revisit.")
         }
     }
 
@@ -2628,22 +3256,6 @@ private enum WorkspaceListScope: String, CaseIterable, Identifiable {
             return "tray"
         case .archive:
             return "archivebox"
-        }
-    }
-}
-
-private enum WorkspaceInspectorTab: String, CaseIterable, Identifiable {
-    case overview
-    case artifacts
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .overview:
-            return "Now"
-        case .artifacts:
-            return "Artifacts"
         }
     }
 }
@@ -2660,15 +3272,15 @@ private enum WorkspaceTaskFilter: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .all:
-            return "All"
+            return HermesDeskL10n.text(zh: "全部", en: "All")
         case .needsInput:
-            return "Action Required"
+            return HermesDeskL10n.text(zh: "需要处理", en: "Action Required")
         case .running:
-            return "Running"
+            return HermesDeskL10n.text(zh: "进行中", en: "Running")
         case .open:
-            return "Open"
+            return HermesDeskL10n.text(zh: "开放中", en: "Open")
         case .archived:
-            return "Archived"
+            return HermesDeskL10n.text(zh: "已归档", en: "Archived")
         }
     }
 
@@ -2701,11 +3313,11 @@ private enum WorkspaceAgentPreset: String, CaseIterable, Identifiable {
         case .hermes:
             return "Hermes"
         case .builder:
-            return "Builder"
+            return HermesDeskL10n.text(zh: "构建", en: "Builder")
         case .reviewer:
-            return "Reviewer"
+            return HermesDeskL10n.text(zh: "审查", en: "Reviewer")
         case .analyst:
-            return "Analyst"
+            return HermesDeskL10n.text(zh: "分析", en: "Analyst")
         }
     }
 
@@ -2714,11 +3326,11 @@ private enum WorkspaceAgentPreset: String, CaseIterable, Identifiable {
         case .hermes:
             return "Hermes"
         case .builder:
-            return "Build"
+            return HermesDeskL10n.text(zh: "构建", en: "Build")
         case .reviewer:
-            return "Review"
+            return HermesDeskL10n.text(zh: "审查", en: "Review")
         case .analyst:
-            return "Analyze"
+            return HermesDeskL10n.text(zh: "分析", en: "Analyze")
         }
     }
 
@@ -2751,13 +3363,13 @@ private enum WorkspaceAgentPreset: String, CaseIterable, Identifiable {
     var defaultTaskTitle: String {
         switch self {
         case .hermes:
-            return "Hermes task"
+            return HermesDeskL10n.text(zh: "Hermes 任务", en: "Hermes task")
         case .builder:
-            return "Build with Hermes"
+            return HermesDeskL10n.text(zh: "用 Hermes 构建", en: "Build with Hermes")
         case .reviewer:
-            return "Review with Hermes"
+            return HermesDeskL10n.text(zh: "用 Hermes 审查", en: "Review with Hermes")
         case .analyst:
-            return "Analyze with Hermes"
+            return HermesDeskL10n.text(zh: "用 Hermes 分析", en: "Analyze with Hermes")
         }
     }
 }
@@ -2789,6 +3401,7 @@ private struct WorkspaceFeedEntry: Identifiable {
     let timestamp: Date?
     let sortPriority: Int
     let usesMarkdown: Bool
+    let liveBodyTaskID: Task.ID?
     let isStreamingMarkdown: Bool
 
     init(
@@ -2805,6 +3418,7 @@ private struct WorkspaceFeedEntry: Identifiable {
         timestamp: Date? = nil,
         sortPriority: Int = 0,
         usesMarkdown: Bool = false,
+        liveBodyTaskID: Task.ID? = nil,
         isStreamingMarkdown: Bool = false
     ) {
         self.id = id
@@ -2820,6 +3434,7 @@ private struct WorkspaceFeedEntry: Identifiable {
         self.timestamp = timestamp
         self.sortPriority = sortPriority
         self.usesMarkdown = usesMarkdown
+        self.liveBodyTaskID = liveBodyTaskID
         self.isStreamingMarkdown = isStreamingMarkdown
     }
 }
@@ -2831,8 +3446,47 @@ private struct WorkspaceBubblePalette {
     let shadow: Color
 }
 
+private struct InspectorSummaryField: Identifiable {
+    let id: String
+    let label: String
+    let value: String
+}
+
+private struct SelectedTaskDerivedSnapshot {
+    let taskID: Task.ID
+    let currentFocusSummary: String
+    let overviewStatusLine: String?
+    let streamingPreview: String?
+    let resultSummary: String?
+    let shouldShowInspectorLatestAnswer: Bool
+    let inspectorSummaryValues: [String: String]
+}
+
+private struct SelectedTaskEntriesSignature: Equatable {
+    let taskID: Task.ID
+    let transcriptCount: Int
+    let pendingCount: Int
+    let transcriptDisplayMode: HermesWorkspaceTranscriptMode
+    let sessionStatus: TaskSessionStatus
+    let state: TaskState
+    let hasStreamingDraft: Bool
+    let artifactSummary: String?
+}
+
 private struct SelectedTaskSnapshotKey: Equatable {
-    let task: Task?
+    let taskID: Task.ID?
+    let updatedAt: Date?
+    let state: TaskState?
+    let sessionStatus: TaskSessionStatus?
+    let runID: String?
+    let currentSummary: String?
+    let outputCount: Int
+    let taskEventCount: Int
+    let availableActionCount: Int
+    let pendingAction: TaskAction?
+    let observationState: RunObservationState?
+    let observationMessage: String?
+    let artifactSummary: String?
     let transcriptCount: Int
     let pendingCount: Int
     let transcriptDisplayMode: HermesWorkspaceTranscriptMode
@@ -2938,9 +3592,14 @@ private struct WorkspaceBubbleShape: InsettableShape {
 
 private struct WorkspaceFeedTailAnchor: Equatable {
     let id: String
-    let body: String
+    let bodyCount: Int
     let footer: String?
     let showsProgress: Bool
+}
+
+private struct WorkspaceFeedAnimationKey: Equatable {
+    let taskID: Task.ID
+    let entryIDs: [String]
 }
 
 private struct WorkspaceScrollMetrics: Equatable {
@@ -3167,22 +3826,7 @@ private extension String {
 
 private extension TaskState {
     var displayTitle: String {
-        switch self {
-        case .queued:
-            return "Queued"
-        case .running:
-            return "Running"
-        case .waitingUser:
-            return "Needs input"
-        case .paused:
-            return "Paused"
-        case .failed:
-            return "Failed"
-        case .succeeded:
-            return "Completed"
-        case .cancelled:
-            return "Stopped"
-        }
+        localizedDisplayTitle
     }
 
     var symbolName: String {
@@ -3228,41 +3872,20 @@ private extension TaskSource {
     var displayTitle: String {
         switch self {
         case .manual:
-            return "Manual"
+            return HermesDeskL10n.text(zh: "手动", en: "Manual")
         case .shortcut:
-            return "Shortcut"
+            return HermesDeskL10n.text(zh: "快捷方式", en: "Shortcut")
         case .scheduled:
-            return "Scheduled"
+            return HermesDeskL10n.text(zh: "计划任务", en: "Scheduled")
         case .restored:
-            return "Restored"
+            return HermesDeskL10n.text(zh: "已恢复", en: "Restored")
         }
     }
 }
 
 private extension TaskAction {
     var displayTitle: String {
-        switch self {
-        case .approveOnce:
-            return "Approve once"
-        case .approveForTask:
-            return "Approve for task"
-        case .reject:
-            return "Reject"
-        case .retry:
-            return "Retry"
-        case .resume:
-            return "Resume"
-        case .pause:
-            return "Pause"
-        case .stop:
-            return "Stop"
-        case .openTerminal:
-            return "Open Terminal"
-        case .openWorkspace:
-            return "Open Workspace"
-        case .copyResult:
-            return "Copy Result"
-        }
+        localizedDisplayTitle
     }
 
     var symbolName: String {

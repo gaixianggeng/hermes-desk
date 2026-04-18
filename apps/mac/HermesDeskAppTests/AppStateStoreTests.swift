@@ -354,7 +354,7 @@ final class AppStateStoreTests: XCTestCase {
 
         let hiddenTask = try XCTUnwrap(store.tasks.first(where: { $0.taskID == alphaTask.taskID }))
         XCTAssertTrue(hiddenTask.output.contains("chunk-199"))
-        XCTAssertFalse(store.transcriptMessages(for: hiddenTask).isEmpty)
+        XCTAssertTrue(store.transcriptMessages(for: hiddenTask).isEmpty)
         XCTAssertLessThan(elapsedMS, 2_000)
         print("LOCAL_BENCH hidden-stream-switch elapsed_ms=\(String(format: "%.2f", elapsedMS))")
     }
@@ -730,7 +730,7 @@ final class AppStateStoreTests: XCTestCase {
 
         let task = try XCTUnwrap(store.tasks.first(where: { $0.taskID == taskID }))
         XCTAssertNil(task.runID)
-        XCTAssertEqual(task.output, "苏州今天多云，26°C。")
+        XCTAssertEqual(task.output, "")
         XCTAssertEqual(task.currentSummary, "苏州今天多云，26°C。")
         XCTAssertEqual(task.runState.phaseLabel, "Conversation updated")
         XCTAssertNil(task.artifact)

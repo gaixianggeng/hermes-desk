@@ -4,11 +4,17 @@ import HermesKit
 import SwiftUI
 
 enum HermesDeskPerformanceLog {
+    private static let isEnabled = ProcessInfo.processInfo.environment["HERMES_DESK_DEBUG_LOGS"] == "1"
+
     private static func timestampString() -> String {
+        formatter.string(from: Date())
+    }
+
+    nonisolated(unsafe) private static let formatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.string(from: Date())
-    }
+        return formatter
+    }()
 
     private static func directoryURL() -> URL {
         let supportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -22,6 +28,9 @@ enum HermesDeskPerformanceLog {
     }
 
     static func append(_ message: String) {
+        guard isEnabled else {
+            return
+        }
         let fileURL = fileURL()
         let line = "[\(timestampString())] \(message)\n"
         do {
@@ -56,13 +65,18 @@ enum HermesDeskPerformanceLog {
 }
 
 private enum HermesDeskRunObservationLog {
+    private static let isEnabled = ProcessInfo.processInfo.environment["HERMES_DESK_DEBUG_LOGS"] == "1"
+
     static func append(_ message: String) {
+        guard isEnabled else {
+            return
+        }
         let supportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
                 .appending(path: "Library/Application Support", directoryHint: .isDirectory)
         let directoryURL = supportURL.appending(path: "HermesDesk", directoryHint: .isDirectory)
         let fileURL = directoryURL.appending(path: "run-events-debug.log")
-        let line = "[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n"
+        let line = "[\(formatter.string(from: Date()))] \(message)\n"
         do {
             try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
             if FileManager.default.fileExists(atPath: fileURL.path) == false {
@@ -76,6 +90,12 @@ private enum HermesDeskRunObservationLog {
             return
         }
     }
+
+    nonisolated(unsafe) private static let formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 }
 
 struct HermesDeskTaskCacheStore {
@@ -292,16 +312,17 @@ final class AppStateStore: ObservableObject {
     }
     @Published var tasks: [Task] = [] {
         didSet {
+            let taskIDs = Set(tasks.map(\.taskID))
             if let selectedTaskID,
                selectedTaskID != Self.newTaskSelectionSentinel,
-               tasks.contains(where: { $0.taskID == selectedTaskID }) == false {
+               taskIDs.contains(selectedTaskID) == false {
                 self.selectedTaskID = nil
             }
             pendingOutgoingMessagesByTaskID = pendingOutgoingMessagesByTaskID.filter { taskID, _ in
-                tasks.contains(where: { $0.taskID == taskID })
+                taskIDs.contains(taskID)
             }
             stableWorkspaceEntryIDsByTaskID = stableWorkspaceEntryIDsByTaskID.filter { taskID, _ in
-                tasks.contains(where: { $0.taskID == taskID })
+                taskIDs.contains(taskID)
             }
             selectDefaultTaskIfNeeded()
         }
@@ -331,6 +352,7 @@ final class AppStateStore: ObservableObject {
     private var bufferedStreamingTimestampsByTaskID: [Task.ID: Date] = [:]
     private var streamingFlushTasksByTaskID: [Task.ID: Swift.Task<Void, Never>] = [:]
     private var streamingDeltaMetricsByTaskID: [Task.ID: (count: Int, chars: Int)] = [:]
+    private var streamingOutputChunksByTaskID: [Task.ID: [String]] = [:]
     private var deferredStreamingOutputByTaskID: [Task.ID: (content: String, timestamp: Date)] = [:]
     private var nextLocalTranscriptMessageID: Int64 = -1
 
@@ -355,7 +377,7 @@ final class AppStateStore: ObservableObject {
         }
         restorePersistedClientState()
         startPendingActionMonitor()
-        if agents.isEmpty {
+        if initialAgents == nil {
             scheduleAgentReload(reason: .appLaunch)
         }
     }
@@ -366,6 +388,7 @@ final class AppStateStore: ObservableObject {
         agentReloadTask?.cancel()
         deferredPersistenceTask?.cancel()
         streamingFlushTasksByTaskID.values.forEach { $0.cancel() }
+        streamingOutputChunksByTaskID.removeAll()
         runEventSessionTokens.removeAll()
     }
 
@@ -539,7 +562,7 @@ final class AppStateStore: ObservableObject {
             }
             return text(zh: "本地接口可用", en: "Local API reachable")
         case let .starting(message), let .disconnected(message), let .configurationError(message):
-            return message
+            return systemText(message)
         }
     }
 
@@ -547,29 +570,33 @@ final class AppStateStore: ObservableObject {
         HermesDeskL10n.text(preference: languagePreference, zh: zh, en: en)
     }
 
+    func systemText(_ raw: String) -> String {
+        HermesDeskL10n.systemText(preference: languagePreference, raw)
+    }
+
     var diagnosticsSummary: String {
         let logsPath = backendDiagnostics.hermesHomePath.map {
             URL(fileURLWithPath: $0, isDirectory: true)
                 .appending(path: "logs", directoryHint: .isDirectory)
                 .path
-        } ?? "Unavailable"
-        let selectedTaskSummary = selectedTask?.taskID ?? "None"
+        } ?? text(zh: "不可用", en: "Unavailable")
+        let selectedTaskSummary = selectedTask?.taskID ?? text(zh: "无", en: "None")
         return [
-            "Agent: \(selectedAgentDisplayName)",
-            "Runtime profile: \(selectedRuntimeProfileDisplayName)",
-            "Adapter: \(backendDiagnostics.adapterName)",
-            "Endpoint: \(endpoint.displayName)",
-            "Status: \(connectionState.title)",
-            "Status detail: \(connectionState.detail)",
-            "Hermes home: \(backendDiagnostics.hermesHomePath ?? "Unavailable")",
-            "Environment file: \(backendDiagnostics.environmentFilePath ?? "Unavailable")",
-            "Environment file exists: \(backendDiagnostics.environmentFileExists ? "yes" : "no")",
-            "API key configured: \(backendDiagnostics.apiKeyConfigured ? "yes" : "no")",
-            "Logs directory: \(logsPath)",
-            "Live tasks: \(liveTasks.count)",
-            "Preview tasks: \(previewTasks.count)",
-            "Inbox / Running / Open / Archived: \(inboxCount) / \(runningCount) / \(openCount) / \(archivedCount)",
-            "Selected task: \(selectedTaskSummary)"
+            "\(text(zh: "Agent", en: "Agent")): \(selectedAgentDisplayName)",
+            "\(text(zh: "运行时配置", en: "Runtime profile")): \(selectedRuntimeProfileDisplayName)",
+            "\(text(zh: "适配器", en: "Adapter")): \(backendDiagnostics.adapterName)",
+            "\(text(zh: "端点", en: "Endpoint")): \(endpoint.displayName)",
+            "\(text(zh: "状态", en: "Status")): \(connectionState.title)",
+            "\(text(zh: "状态说明", en: "Status detail")): \(connectionState.detail)",
+            "\(text(zh: "Hermes 主目录", en: "Hermes home")): \(backendDiagnostics.hermesHomePath ?? text(zh: "不可用", en: "Unavailable"))",
+            "\(text(zh: "环境文件", en: "Environment file")): \(backendDiagnostics.environmentFilePath ?? text(zh: "不可用", en: "Unavailable"))",
+            "\(text(zh: "环境文件存在", en: "Environment file exists")): \(backendDiagnostics.environmentFileExists ? text(zh: "是", en: "yes") : text(zh: "否", en: "no"))",
+            "\(text(zh: "API Key 已配置", en: "API key configured")): \(backendDiagnostics.apiKeyConfigured ? text(zh: "是", en: "yes") : text(zh: "否", en: "no"))",
+            "\(text(zh: "日志目录", en: "Logs directory")): \(logsPath)",
+            "\(text(zh: "实时任务", en: "Live tasks")): \(liveTasks.count)",
+            "\(text(zh: "示例任务", en: "Preview tasks")): \(previewTasks.count)",
+            "\(text(zh: "待处理 / 运行中 / 开放中 / 已归档", en: "Inbox / Running / Open / Archived")): \(inboxCount) / \(runningCount) / \(openCount) / \(archivedCount)",
+            "\(text(zh: "当前任务", en: "Selected task")): \(selectedTaskSummary)"
         ].joined(separator: "\n")
     }
 
@@ -919,12 +946,21 @@ final class AppStateStore: ObservableObject {
 
     private func streamingFlushDelay(for taskID: Task.ID) -> Duration {
         guard let task = tasks.first(where: { $0.taskID == taskID }) else {
-            return .milliseconds(120)
+            return .milliseconds(250)
         }
         guard task.agentID == selectedAgentID else {
             return .seconds(1)
         }
-        return .milliseconds(120)
+        switch task.output.count {
+        case 0..<1500:
+            return .milliseconds(250)
+        case 1500..<3000:
+            return .milliseconds(400)
+        case 3000..<5000:
+            return .milliseconds(650)
+        default:
+            return .milliseconds(900)
+        }
     }
 
     private func shouldDeferStreamingTaskUpdate(for taskID: Task.ID) -> Bool {
@@ -940,23 +976,13 @@ final class AppStateStore: ObservableObject {
             return
         }
 
-        tasks[index].updatedAt = deferred.timestamp
-        tasks[index].runState.lastEventAt = deferred.timestamp
-        tasks[index].output += deferred.content
-        tasks[index].currentSummary = tasks[index].latestOutputSummary ?? tasks[index].currentSummary
-        tasks[index].runState.progressHint = tasks[index].latestOutputSummary
-
-        if let sessionID = tasks[index].effectiveSessionID {
-            let content = tasks[index].output.trimmingCharacters(in: .whitespacesAndNewlines)
-            if content.isEmpty == false {
-                upsertStreamingAssistantMessage(
-                    for: taskID,
-                    sessionID: sessionID,
-                    content: content,
-                    timestamp: deferred.timestamp
-                )
-            }
-        }
+        var task = tasks[index]
+        task.updatedAt = deferred.timestamp
+        task.runState.lastEventAt = deferred.timestamp
+        task.output += deferred.content
+        task.currentSummary = "Streaming output from Hermes"
+        task.runState.progressHint = "Streaming output from Hermes"
+        tasks[index] = task
     }
 
     private func materializeDeferredStreamingOutputForSelectedAgent() {
@@ -994,45 +1020,28 @@ final class AppStateStore: ObservableObject {
             return
         }
 
-        tasks[index].updatedAt = timestamp
-        tasks[index].runState.lastEventAt = timestamp
-        tasks[index].pendingAction = nil
-        tasks[index].pendingActionStartedAt = nil
-        tasks[index].runState.state = .running
-        tasks[index].runState.phaseLabel = "Streaming output"
-        tasks[index].runState.failureCategory = nil
-        tasks[index].runState.failureMessage = nil
-        tasks[index].runState.waitingReason = nil
-        tasks[index].runState.observationState = .live
-        tasks[index].runState.observationMessage = nil
-        tasks[index].availableActions = [.stop, .openWorkspace]
-        tasks[index].output += delta
-        tasks[index].currentSummary = tasks[index].latestOutputSummary ?? "Streaming output from Hermes"
-        tasks[index].runState.progressHint = tasks[index].latestOutputSummary
-
-        let shouldMaterializeTranscript = shouldMaterializeStreamingTranscript(for: taskID)
-        if shouldMaterializeTranscript, let sessionID = tasks[index].effectiveSessionID {
-            let content = tasks[index].output.trimmingCharacters(in: .whitespacesAndNewlines)
-            if content.isEmpty == false {
-                upsertStreamingAssistantMessage(
-                    for: taskID,
-                    sessionID: sessionID,
-                    content: content,
-                    timestamp: timestamp
-                )
-            }
-        }
+        var task = tasks[index]
+        task.updatedAt = timestamp
+        task.runState.lastEventAt = timestamp
+        task.pendingAction = nil
+        task.pendingActionStartedAt = nil
+        task.runState.state = .running
+        task.runState.phaseLabel = "Streaming output"
+        task.runState.failureCategory = nil
+        task.runState.failureMessage = nil
+        task.runState.waitingReason = nil
+        task.runState.observationState = .live
+        task.runState.observationMessage = nil
+        task.availableActions = [.stop, .openWorkspace]
+        task.output += delta
+        task.currentSummary = "Streaming output from Hermes"
+        task.runState.progressHint = "Streaming output from Hermes"
+        tasks[index] = task
 
         if logMetrics, let metrics = streamingDeltaMetricsByTaskID.removeValue(forKey: taskID) {
             HermesDeskRunObservationLog.append(
                 "delta batch task=\(taskID) chunks=\(metrics.count) chars=\(metrics.chars)"
             )
-        }
-
-        if shouldMaterializeTranscript {
-            let task = tasks[index]
-            reconcilePendingOutgoingMessages(for: task)
-            rebuildWorkspaceMessagesCache(for: task)
         }
         scheduleDeferredPersistence(after: .seconds(1))
     }
@@ -1298,13 +1307,19 @@ final class AppStateStore: ObservableObject {
            lastMessage.role == .assistant,
            lastMessage.id < 0,
            lastMessage.sessionID == sessionID {
-            messages[messages.count - 1] = HermesConversationMessage(
+            let updatedMessage = HermesConversationMessage(
                 id: lastMessage.id,
                 sessionID: sessionID,
                 role: .assistant,
                 content: content,
                 timestamp: adjustedTimestamp
             )
+            if lastMessage == updatedMessage {
+                return
+            }
+            messages[messages.count - 1] = updatedMessage
+            workspaceMessagesByTaskID[taskID] = messages
+            return
         } else {
             messages.append(
                 HermesConversationMessage(
@@ -1322,10 +1337,6 @@ final class AppStateStore: ObservableObject {
             return
         }
         workspaceMessagesByTaskID[taskID] = normalizedMessages
-    }
-
-    private func shouldMaterializeStreamingTranscript(for taskID: Task.ID) -> Bool {
-        selectedTaskID == taskID
     }
 
     private func workspaceMessageFingerprint(for message: HermesConversationMessage) -> WorkspaceMessageFingerprint {
@@ -1443,7 +1454,7 @@ final class AppStateStore: ObservableObject {
         settleConversationRun(
             at: index,
             finalText: finalText,
-            phaseLabel: text(zh: "对话已更新", en: "Conversation updated")
+            phaseLabel: "Conversation updated"
         )
     }
 
@@ -1709,7 +1720,7 @@ final class AppStateStore: ObservableObject {
 
     func performTaskAction(_ action: TaskAction, for taskID: Task.ID) {
         guard let index = tasks.firstIndex(where: { $0.taskID == taskID }) else {
-            taskActionFeedback = "The selected task is no longer available."
+            taskActionFeedback = text(zh: "当前选中的任务已不可用。", en: "The selected task is no longer available.")
             return
         }
 
@@ -1720,13 +1731,13 @@ final class AppStateStore: ObservableObject {
         switch action {
         case .openWorkspace:
             reveal(path: taskDiagnostics.hermesHomePath)
-            taskActionFeedback = "Opened the agent runtime in Finder."
+            taskActionFeedback = text(zh: "已在 Finder 中打开 Agent 运行时目录。", en: "Opened the agent runtime in Finder.")
 
         case .openTerminal:
             if openTerminal(at: taskDiagnostics.hermesHomePath) {
-                taskActionFeedback = "Opened Terminal at the agent runtime directory."
+                taskActionFeedback = text(zh: "已在 Agent 运行时目录打开终端。", en: "Opened Terminal at the agent runtime directory.")
             } else {
-                taskActionFeedback = "Could not open Terminal for the agent runtime directory."
+                taskActionFeedback = text(zh: "无法为 Agent 运行时目录打开终端。", en: "Could not open Terminal for the agent runtime directory.")
             }
 
         case .copyResult:
@@ -1734,7 +1745,7 @@ final class AppStateStore: ObservableObject {
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
             pasteboard.setString(copied, forType: .string)
-            taskActionFeedback = "Copied the latest task result to the clipboard."
+            taskActionFeedback = text(zh: "已将最新任务结果复制到剪贴板。", en: "Copied the latest task result to the clipboard.")
 
         case .approveOnce, .approveForTask, .reject, .retry, .resume, .pause, .stop:
             if task.isPreview {
@@ -1747,20 +1758,20 @@ final class AppStateStore: ObservableObject {
 
     func reconnectLiveFeed(for taskID: Task.ID) {
         guard let index = tasks.firstIndex(where: { $0.taskID == taskID }) else {
-            taskActionFeedback = "The selected task is no longer available."
+            taskActionFeedback = text(zh: "当前选中的任务已不可用。", en: "The selected task is no longer available.")
             return
         }
 
         let task = tasks[index]
         guard task.isPreview == false, task.state.isTerminal == false, let runID = task.runID else {
-            taskActionFeedback = "This task does not have a reconnectable live Hermes feed."
+            taskActionFeedback = text(zh: "这个任务当前没有可重连的 Hermes 实时流。", en: "This task does not have a reconnectable live Hermes feed.")
             return
         }
 
         tasks[index].runState.observationState = .reconnecting
         tasks[index].runState.observationMessage = "Manual reconnect requested from Hermes Desk."
         tasks[index].updatedAt = .now
-        taskActionFeedback = "Reconnecting the live Hermes feed now."
+        taskActionFeedback = text(zh: "正在重连 Hermes 实时流。", en: "Reconnecting the live Hermes feed now.")
         persistClientState()
         connectRunEvents(taskID: taskID, runID: runID)
     }
@@ -1774,7 +1785,7 @@ final class AppStateStore: ObservableObject {
         }
 
         guard reconnectableTasks.isEmpty == false else {
-            taskActionFeedback = "There are no interrupted live feeds to reconnect right now."
+            taskActionFeedback = text(zh: "当前没有需要重连的中断实时流。", en: "There are no interrupted live feeds to reconnect right now.")
             return
         }
 
@@ -1942,7 +1953,7 @@ final class AppStateStore: ObservableObject {
             settleConversationRun(
                 at: index,
                 finalText: finalText,
-                phaseLabel: text(zh: "对话已更新", en: "Conversation updated")
+                phaseLabel: "Conversation updated"
             )
         } else {
             settleRunWithoutVisibleAnswer(at: index)
@@ -2063,7 +2074,7 @@ final class AppStateStore: ObservableObject {
                     settleConversationRun(
                         at: index,
                         finalText: content,
-                        phaseLabel: text(zh: "对话已更新", en: "Conversation updated")
+                        phaseLabel: "Conversation updated"
                     )
                 }
             case .runFailed, .runInterrupted, .reasoningAvailable, .toolStarted, .toolCompleted, .approvalRequested, .approvalResolved, .observationReconnecting, .observationDisconnected:
@@ -2120,7 +2131,13 @@ final class AppStateStore: ObservableObject {
         tasks[index].runState.observationState = .live
         tasks[index].runState.observationMessage = nil
         tasks[index].currentSummary = trimmed.count > 180 ? String(trimmed.prefix(180)) + "…" : trimmed
-        tasks[index].output = trimmed
+        let hasMatchingTranscriptReply = transcriptMessages(for: tasks[index]).contains { message in
+            guard message.role == .assistant else {
+                return false
+            }
+            return message.displayText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed
+        }
+        tasks[index].output = hasMatchingTranscriptReply ? "" : trimmed
         tasks[index].availableActions = [.openWorkspace]
         tasks[index].artifact = nil
 
@@ -2136,7 +2153,7 @@ final class AppStateStore: ObservableObject {
         tasks[index].pendingAction = nil
         tasks[index].pendingActionStartedAt = nil
         tasks[index].runState.state = .running
-        tasks[index].runState.phaseLabel = text(zh: "运行已结束", en: "Run finished")
+        tasks[index].runState.phaseLabel = "Run finished"
         tasks[index].runState.progressHint = nil
         tasks[index].runState.observationState = .live
         tasks[index].runState.observationMessage = nil
@@ -2152,7 +2169,7 @@ final class AppStateStore: ObservableObject {
 
     private func performLiveTaskAction(_ action: TaskAction, task: Task) {
         guard let runID = task.runID else {
-            taskActionFeedback = "This live task is missing a Hermes run ID."
+            taskActionFeedback = text(zh: "这个实时任务缺少 Hermes run ID。", en: "This live task is missing a Hermes run ID.")
             return
         }
 
@@ -2222,7 +2239,7 @@ final class AppStateStore: ObservableObject {
                 tasks[originalIndex].pendingActionStartedAt = nil
                 tasks[originalIndex].runID = response.runID
                 tasks[originalIndex].runState.state = .running
-                tasks[originalIndex].runState.phaseLabel = text(zh: "重试中", en: "Retrying")
+                tasks[originalIndex].runState.phaseLabel = "Retrying"
                 tasks[originalIndex].runState.progressHint = text(zh: "新的运行已在当前任务下启动。", en: "A replacement run was launched within the current task.")
                 tasks[originalIndex].currentSummary = text(zh: "已发起重试，继续关注当前任务即可。", en: "Retry requested. Continue following this task.")
                 tasks[originalIndex].availableActions = [.stop, .openWorkspace]
@@ -2254,7 +2271,7 @@ final class AppStateStore: ObservableObject {
                 tasks[originalIndex].currentSummary = "Approval rejection sent. Hermes should stop this risky step."
                 tasks[originalIndex].updatedAt = .now
             }
-            taskActionFeedback = "Rejection sent to Hermes."
+            taskActionFeedback = text(zh: "已向 Hermes 发送拒绝。", en: "Rejection sent to Hermes.")
 
         case .stop:
             if let originalIndex = tasks.firstIndex(where: { $0.taskID == originalTask.taskID }) {
@@ -2265,7 +2282,7 @@ final class AppStateStore: ObservableObject {
                 tasks[originalIndex].availableActions = [.openWorkspace]
                 tasks[originalIndex].updatedAt = .now
             }
-            taskActionFeedback = "Stop request sent to Hermes."
+            taskActionFeedback = text(zh: "已向 Hermes 发送停止请求。", en: "Stop request sent to Hermes.")
 
         case .resume, .pause, .openTerminal, .openWorkspace, .copyResult:
             break
@@ -2307,7 +2324,7 @@ final class AppStateStore: ObservableObject {
             task.runState.waitingReason = nil
             task.currentSummary = "Approval rejected. The preview task is blocked until you retry it."
             task.availableActions = [.retry, .openTerminal, .openWorkspace]
-            taskActionFeedback = "Preview approval rejected."
+            taskActionFeedback = text(zh: "示例任务确认已拒绝。", en: "Preview approval rejected.")
             appendLocalEvent(
                 to: &task,
                 type: .confirm,
@@ -2325,7 +2342,7 @@ final class AppStateStore: ObservableObject {
             task.runState.waitingReason = nil
             task.currentSummary = "Retry requested. The preview task is running again."
             task.availableActions = [.stop, .openWorkspace]
-            taskActionFeedback = "Preview task moved back into running state."
+            taskActionFeedback = text(zh: "示例任务已恢复到运行状态。", en: "Preview task moved back into running state.")
             appendLocalEvent(
                 to: &task,
                 type: .stateChange,
@@ -2341,7 +2358,7 @@ final class AppStateStore: ObservableObject {
             task.runState.waitingReason = nil
             task.currentSummary = "Resume requested. The preview task is active again."
             task.availableActions = [.pause, .stop, .openWorkspace]
-            taskActionFeedback = "Preview task resumed."
+            taskActionFeedback = text(zh: "示例任务已继续。", en: "Preview task resumed.")
             appendLocalEvent(
                 to: &task,
                 type: .stateChange,
@@ -2357,7 +2374,7 @@ final class AppStateStore: ObservableObject {
             task.runState.waitingReason = "Paused from Hermes Desk preview controls"
             task.currentSummary = "Pause requested. The preview task is waiting to be resumed."
             task.availableActions = [.resume, .openWorkspace]
-            taskActionFeedback = "Preview task paused."
+            taskActionFeedback = text(zh: "示例任务已暂停。", en: "Preview task paused.")
             appendLocalEvent(
                 to: &task,
                 type: .stateChange,
@@ -2373,7 +2390,7 @@ final class AppStateStore: ObservableObject {
             task.runState.waitingReason = nil
             task.currentSummary = "Stop requested. The preview task has been cancelled."
             task.availableActions = [.openWorkspace]
-            taskActionFeedback = "Preview task stopped."
+            taskActionFeedback = text(zh: "示例任务已停止。", en: "Preview task stopped.")
             appendLocalEvent(
                 to: &task,
                 type: .stateChange,
@@ -2572,7 +2589,7 @@ final class AppStateStore: ObservableObject {
         tasks[index].artifact = nil
         tasks[index].availableActions = [.openWorkspace]
         tasks[index].runState.state = .running
-        tasks[index].runState.phaseLabel = text(zh: "对话已更新", en: "Conversation updated")
+        tasks[index].runState.phaseLabel = "Conversation updated"
         tasks[index].runState.progressHint = nil
         tasks[index].runState.observationState = .live
         tasks[index].runState.observationMessage = nil
@@ -2593,7 +2610,7 @@ extension TaskState {
         case .running:
             return HermesDeskL10n.text(zh: "进行中", en: "Running")
         case .waitingUser:
-            return HermesDeskL10n.text(zh: "待确认", en: "Waiting User")
+            return HermesDeskL10n.text(zh: "待确认", en: "Needs input")
         case .paused:
             return HermesDeskL10n.text(zh: "已暂停", en: "Paused")
         case .failed:
@@ -2601,7 +2618,7 @@ extension TaskState {
         case .succeeded:
             return HermesDeskL10n.text(zh: "已完成", en: "Completed")
         case .cancelled:
-            return HermesDeskL10n.text(zh: "已停止", en: "Cancelled")
+            return HermesDeskL10n.text(zh: "已停止", en: "Stopped")
         }
     }
 }
@@ -2661,9 +2678,9 @@ private enum SubscriptionRestoreReason {
     var statusMessage: String {
         switch self {
         case .appLaunch:
-            return "Restoring the live Hermes feed after Hermes Desk launch."
+            return HermesDeskL10n.text(zh: "Hermes Desk 启动后，正在恢复 Hermes 实时任务流。", en: "Restoring the live Hermes feed after Hermes Desk launch.")
         case .healthRefresh:
-            return "Hermes is back online. Restoring the live task feed."
+            return HermesDeskL10n.text(zh: "Hermes 已恢复在线，正在重建实时任务流。", en: "Hermes is back online. Restoring the live task feed.")
         }
     }
 }
@@ -2677,13 +2694,13 @@ private enum RunLaunchValidationError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emptyPrompt:
-            return "Enter a task for Hermes before starting the run."
+            return HermesDeskL10n.text(zh: "请先输入要交给 Hermes 的任务，再开始运行。", en: "Enter a task for Hermes before starting the run.")
         case .alreadyStarting:
-            return "Hermes is already starting another task."
+            return HermesDeskL10n.text(zh: "Hermes 正在启动另一个任务。", en: "Hermes is already starting another task.")
         case .apiKeyMissing:
-            return "The current agent runtime is missing API_SERVER_KEY, so Hermes Desk cannot send runs yet."
+            return HermesDeskL10n.text(zh: "当前 Agent 运行时缺少 API_SERVER_KEY，所以 Hermes Desk 还不能发起运行。", en: "The current agent runtime is missing API_SERVER_KEY, so Hermes Desk cannot send runs yet.")
         case .unmanagedConversation:
-            return "Only conversations created by Hermes Desk can continue inside this app."
+            return HermesDeskL10n.text(zh: "只有由 Hermes Desk 创建的对话才能在这个应用里继续。", en: "Only conversations created by Hermes Desk can continue inside this app.")
         }
     }
 }

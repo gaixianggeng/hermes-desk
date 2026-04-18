@@ -70,12 +70,12 @@ struct MenuBarScene: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Text(task.title)
+                Text(appState.systemText(task.title))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.primary)
                     .multilineTextAlignment(.leading)
 
-                Text(task.currentSummary)
+                Text(appState.systemText(task.currentSummary))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.leading)

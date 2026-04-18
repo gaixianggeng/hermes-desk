@@ -25,19 +25,19 @@ struct FailurePanelView: View {
                 .font(.headline)
                 .foregroundStyle(.red)
 
-            Text(task.runState.failureMessage ?? task.currentSummary)
+            Text(appState.systemText(task.runState.failureMessage ?? task.currentSummary))
                 .font(.subheadline.weight(.medium))
 
             VStack(alignment: .leading, spacing: 8) {
                 infoRow(label: appState.text(zh: "失败类型", en: "Failure type"), value: task.runState.failureCategory?.localizedDisplayTitle ?? appState.text(zh: "未知", en: "Unknown"))
                 if let waitingReason = task.runState.waitingReason {
-                    infoRow(label: appState.text(zh: "阻塞原因", en: "Blocked on"), value: waitingReason)
+                    infoRow(label: appState.text(zh: "阻塞原因", en: "Blocked on"), value: appState.systemText(waitingReason))
                 }
                 infoRow(label: appState.text(zh: "建议下一步", en: "Recommended next step"), value: recoveryRecommendation)
             }
 
             if let feedback {
-                Text(feedback)
+                Text(appState.systemText(feedback))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -144,27 +144,6 @@ private extension TaskAction {
             return "doc.on.doc.fill"
         default:
             return "circle"
-        }
-    }
-}
-
-private extension FailureCategory {
-    var displayTitle: String {
-        switch self {
-        case .connectionError:
-            return "Connection issue"
-        case .toolError:
-            return "Tool error"
-        case .approvalRejected:
-            return "Approval rejected"
-        case .approvalExpired:
-            return "Approval expired"
-        case .validationError:
-            return "Validation error"
-        case .dependencyError:
-            return "Dependency issue"
-        case .unknownError:
-            return "Unknown error"
         }
     }
 }

@@ -25,7 +25,7 @@ struct ConfirmationCardView: View {
                 .font(.headline)
                 .foregroundStyle(.orange)
 
-            Text(task.runState.waitingReason ?? task.currentSummary)
+            Text(appState.systemText(task.runState.waitingReason ?? task.currentSummary))
                 .font(.subheadline.weight(.medium))
 
             Text(appState.text(zh: "请在这里判断任务是否应该继续。示例任务可用于 dogfooding；真实 Hermes 运行现在也会直接通过 Hermes Desk 下发确认决策。", en: "Use this card to decide whether the task should continue. Preview tasks stay fully interactive for dogfooding, and live Hermes runs now send approval decisions directly through Hermes Desk."))
@@ -35,7 +35,7 @@ struct ConfirmationCardView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(appState.text(zh: "证据", en: "Evidence"))
                     .font(.subheadline.weight(.semibold))
-                Text(task.latestOutputSummary ?? task.currentSummary)
+                Text(task.latestOutputSummary ?? appState.systemText(task.currentSummary))
                     .font(.callout.monospaced())
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
@@ -44,7 +44,7 @@ struct ConfirmationCardView: View {
             .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             if let feedback {
-                Text(feedback)
+                Text(appState.systemText(feedback))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

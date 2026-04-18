@@ -228,16 +228,19 @@ public struct Task: Codable, Equatable, Sendable, Identifiable {
     }
 
     public var latestOutputSummary: String? {
-        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.isEmpty == false else {
+        guard output.isEmpty == false else {
             return nil
         }
 
-        if trimmed.count <= 320 {
-            return trimmed
+        if output.count <= 320 {
+            let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
         }
 
-        let suffix = trimmed.suffix(320)
+        let suffix = String(output.suffix(320)).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard suffix.isEmpty == false else {
+            return nil
+        }
         return "…\(suffix)"
     }
 

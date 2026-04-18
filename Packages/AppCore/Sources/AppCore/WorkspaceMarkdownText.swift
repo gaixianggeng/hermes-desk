@@ -4,6 +4,13 @@ import SwiftUI
 
 public enum WorkspaceMarkdownSourceFormatter {
     public static func normalized(_ text: String) -> String {
+        let value = WorkspaceStringTransformCache.normalized.value(for: text) {
+            normalizedUncached($0)
+        }
+        return value
+    }
+
+    private static func normalizedUncached(_ text: String) -> String {
         let normalizedLineEndings = text.replacingOccurrences(of: "\r\n", with: "\n")
         let unwrappedMarkdownFence = unwrapMarkdownExampleFence(in: normalizedLineEndings)
         let lines = unwrappedMarkdownFence.components(separatedBy: "\n")
@@ -187,6 +194,13 @@ public enum WorkspaceMarkdownSourceFormatter {
 
 public enum WorkspaceMarkdownPreviewFormatter {
     public static func plainText(_ text: String) -> String {
+        let value = WorkspaceStringTransformCache.preview.value(for: text) {
+            plainTextUncached($0)
+        }
+        return value
+    }
+
+    private static func plainTextUncached(_ text: String) -> String {
         let normalized = WorkspaceMarkdownSourceFormatter.normalized(text)
         guard normalized.isEmpty == false else {
             return normalized
@@ -223,10 +237,22 @@ public enum WorkspaceMarkdownRenderMode: Equatable, Sendable {
   public static func resolve(
     for text: String,
     isStreaming: Bool,
-    prefersMarkdown: Bool
+    prefersMarkdown: Bool = false
   ) -> WorkspaceMarkdownRenderMode {
     let normalized = WorkspaceMarkdownSourceFormatter.normalized(text)
-    let trimmed = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
+    return resolveNormalized(
+        for: normalized,
+        isStreaming: isStreaming,
+        prefersMarkdown: prefersMarkdown
+    )
+  }
+
+  public static func resolveNormalized(
+    for text: String,
+    isStreaming: Bool,
+    prefersMarkdown: Bool = false
+  ) -> WorkspaceMarkdownRenderMode {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard trimmed.isEmpty == false else {
       return .plainText
     }
@@ -298,7 +324,91 @@ public enum WorkspaceMarkdownRenderMode: Equatable, Sendable {
     }
 }
 
+private enum WorkspaceStreamingMarkdownPlan: Equatable {
+    case plainText(String)
+    case markdown(String)
+    case hybrid(markdownPrefix: String, plainTextSuffix: String)
+}
+
+private enum WorkspaceStreamingMarkdownBoundary {
+    static func stablePrefixEnd(in text: String) -> String.Index? {
+        if let danglingStart = danglingMarkdownStart(in: text) {
+            return blockStart(in: text, before: danglingStart)
+        }
+
+        if let unmatchedFenceStart = unmatchedCodeFenceStart(in: text) {
+            return blockStart(in: text, before: unmatchedFenceStart)
+        }
+
+        guard text.hasSuffix("\n") == false else {
+            return nil
+        }
+
+        guard let separatorRange = text.range(of: "\n\n", options: .backwards) else {
+            return nil
+        }
+
+        return separatorRange.upperBound
+    }
+
+    private static func blockStart(in text: String, before index: String.Index) -> String.Index {
+        guard index > text.startIndex else {
+            return text.startIndex
+        }
+
+        let prefix = text[..<index]
+        if let separatorRange = prefix.range(of: "\n\n", options: .backwards) {
+            return separatorRange.upperBound
+        }
+        return text.startIndex
+    }
+
+    private static func danglingMarkdownStart(in text: String) -> String.Index? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            return nil
+        }
+
+        let patterns = [
+            #"\[[^\]]*$"#,
+            #"\[[^\]]+\]\([^\)]*$"#,
+            #"!\[[^\]]*$"#,
+            #"!\[[^\]]+\]\([^\)]*$"#
+        ]
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else {
+                continue
+            }
+            let range = NSRange(trimmed.startIndex..., in: trimmed)
+            if let match = regex.firstMatch(in: trimmed, options: [], range: range),
+               let matchRange = Range(match.range, in: trimmed) {
+                return matchRange.lowerBound
+            }
+        }
+
+        return nil
+    }
+
+    private static func unmatchedCodeFenceStart(in text: String) -> String.Index? {
+        var searchStart = text.startIndex
+        var openingFenceStart: String.Index?
+        var insideFence = false
+
+        while let range = text.range(of: "```", range: searchStart..<text.endIndex) {
+            if insideFence == false {
+                openingFenceStart = range.lowerBound
+            }
+            insideFence.toggle()
+            searchStart = range.upperBound
+        }
+
+        return insideFence ? openingFenceStart : nil
+    }
+}
+
 public struct WorkspaceMarkdownText: View {
+
     private let text: String
     private let isStreaming: Bool
     private let prefersMarkdown: Bool
@@ -315,35 +425,97 @@ public struct WorkspaceMarkdownText: View {
 
     public var body: some View {
         let normalized = WorkspaceMarkdownSourceFormatter.normalized(text)
-        switch WorkspaceMarkdownRenderMode.resolve(
-            for: normalized,
-            isStreaming: isStreaming,
-            prefersMarkdown: prefersMarkdown
-        ) {
-        case .plainText:
-            Text(verbatim: normalized)
+        switch renderPlan(for: normalized) {
+        case let .plainText(content):
+            Text(verbatim: content)
                 .font(.callout)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
-        case .markdown:
-            Markdown(WorkspaceMarkdownContentCache.shared.content(for: normalized))
-                .markdownTheme(.gitHub)
-                .markdownTextStyle {
-                    FontSize(15)
-                }
+        case let .markdown(content):
+            Markdown(WorkspaceMarkdownContentCache.shared.content(for: content))
+                .markdownTheme(.basic)
+                .markdownBlockStyle(\.heading1, body: compactMarkdownHeading)
+                .markdownBlockStyle(\.heading2, body: compactMarkdownHeading)
+                .markdownBlockStyle(\.heading3, body: compactMarkdownHeading)
+                .markdownBlockStyle(\.heading4, body: compactMarkdownHeading)
+                .markdownBlockStyle(\.heading5, body: compactMarkdownHeading)
+                .markdownBlockStyle(\.heading6, body: compactMarkdownHeading)
                 .fixedSize(horizontal: false, vertical: true)
+        case let .hybrid(markdownPrefix, plainTextSuffix):
+            VStack(alignment: .leading, spacing: 10) {
+                Markdown(WorkspaceMarkdownContentCache.shared.content(for: markdownPrefix))
+                    .markdownTheme(.basic)
+                    .markdownBlockStyle(\.heading1, body: compactMarkdownHeading)
+                    .markdownBlockStyle(\.heading2, body: compactMarkdownHeading)
+                    .markdownBlockStyle(\.heading3, body: compactMarkdownHeading)
+                    .markdownBlockStyle(\.heading4, body: compactMarkdownHeading)
+                    .markdownBlockStyle(\.heading5, body: compactMarkdownHeading)
+                    .markdownBlockStyle(\.heading6, body: compactMarkdownHeading)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(verbatim: plainTextSuffix)
+                    .font(.callout)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
+
+    private func renderPlan(for normalized: String) -> WorkspaceStreamingMarkdownPlan {
+        let trimmed = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            return .plainText(normalized)
+        }
+
+        let prefersStructuredRendering = prefersMarkdown || WorkspaceMarkdownRenderMode.looksLikeMarkdown(trimmed)
+        guard prefersStructuredRendering else {
+            return .plainText(normalized)
+        }
+
+        guard isStreaming else {
+            return .markdown(normalized)
+        }
+
+        guard let splitIndex = WorkspaceStreamingMarkdownBoundary.stablePrefixEnd(in: normalized) else {
+            return .markdown(normalized)
+        }
+
+        let markdownPrefix = String(normalized[..<splitIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let plainTextSuffix = String(normalized[splitIndex...]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if markdownPrefix.isEmpty {
+            return .plainText(normalized)
+        }
+
+        if plainTextSuffix.isEmpty {
+            return .markdown(normalized)
+        }
+
+        return .hybrid(markdownPrefix: markdownPrefix, plainTextSuffix: plainTextSuffix)
+    }
+}
+
+@MainActor
+private func compactMarkdownHeading(configuration: BlockConfiguration) -> some View {
+    configuration.label
+        .markdownMargin(top: .em(0.6), bottom: .em(0.35))
+        .markdownTextStyle {
+            FontWeight(.semibold)
+            FontSize(.em(1))
+        }
 }
 
 private enum WorkspaceMarkdownRenderLog {
     static func append(_ message: String) {
+        guard ProcessInfo.processInfo.environment["HERMES_DESK_DEBUG_LOGS"] == "1" else {
+            return
+        }
         let supportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
                 .appending(path: "Library/Application Support", directoryHint: .isDirectory)
         let directoryURL = supportURL.appending(path: "HermesDesk", directoryHint: .isDirectory)
         let fileURL = directoryURL.appending(path: "run-events-debug.log")
-        let line = "[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n"
+        let line = "[\(formatter.string(from: Date()))] \(message)\n"
 
         do {
             try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
@@ -358,6 +530,12 @@ private enum WorkspaceMarkdownRenderLog {
             return
         }
     }
+
+    nonisolated(unsafe) private static let formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 }
 
 private final class WorkspaceMarkdownContentBox {
@@ -365,6 +543,41 @@ private final class WorkspaceMarkdownContentBox {
 
     init(content: MarkdownContent) {
         self.content = content
+    }
+}
+
+private final class WorkspaceStringBox {
+    let value: String
+
+    init(value: String) {
+        self.value = value
+    }
+}
+
+private final class WorkspaceStringTransformCache: @unchecked Sendable {
+    static let normalized = WorkspaceStringTransformCache(countLimit: 64)
+    static let preview = WorkspaceStringTransformCache(countLimit: 96)
+
+    private let cache = NSCache<NSString, WorkspaceStringBox>()
+    private let lock = NSLock()
+
+    private init(countLimit: Int) {
+        cache.countLimit = countLimit
+    }
+
+    func value(for text: String, transform: (String) -> String) -> String {
+        let key = text as NSString
+        if let cached = cache.object(forKey: key) {
+            return cached.value
+        }
+
+        let transformed = transform(text)
+
+        lock.lock()
+        cache.setObject(WorkspaceStringBox(value: transformed), forKey: key)
+        lock.unlock()
+
+        return transformed
     }
 }
 
